@@ -52,19 +52,56 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
   
   // Pre-process content: fix tables + auto-linkify URLs
   const displayContent = useMemo(() => {
-    // Step 1: Ensure blank lines around markdown tables so remark-gfm parses them
-    let processed = rawContent.replace(
-      /(^|\n)([^\n]*\|[^\n]*\n)(\|[-:\s|]+\|[^\n]*\n)((?:\|[^\n]*\n)*)/gm,
-      (match, prefix) => {
-        const trimmedPrefix = prefix.replace(/\n$/, '');
-        const needsLeadingBlank = trimmedPrefix.length > 0 && !trimmedPrefix.endsWith('\n');
-        return (needsLeadingBlank ? '\n\n' : prefix) + match.slice(prefix.length) + '\n';
+    // Step 1: Consolidate table rows — merge all consecutive pipe-delimited lines
+    // into a single block with no extra blank lines between them.
+    const lines = rawContent.split('\n');
+    const result: string[] = [];
+    const isTableRow = (l: string) => {
+      const trimmed = l.trim();
+      return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 1;
+    };
+    const isSeparator = (l: string) => /^\|[\s:|-]+\|$/.test(l.trim());
+    let inTable = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (isTableRow(line) || isSeparator(line)) {
+        if (!inTable) {
+          // Starting a new table — ensure blank line before it
+          if (result.length > 0 && result[result.length - 1].trim() !== '') {
+            result.push('');
+          }
+          inTable = true;
+        }
+        result.push(line);
+      } else if (inTable && trimmed === '') {
+        // Blank line inside what might be a continued table — peek ahead
+        let nextNonEmpty = i + 1;
+        while (nextNonEmpty < lines.length && lines[nextNonEmpty].trim() === '') {
+          nextNonEmpty++;
+        }
+        if (nextNonEmpty < lines.length && (isTableRow(lines[nextNonEmpty]) || isSeparator(lines[nextNonEmpty]))) {
+          // Skip blank lines between table rows — keep them together
+          continue;
+        } else {
+          // Table ended — add blank line after
+          inTable = false;
+          result.push('');
+          result.push(line);
+        }
+      } else {
+        if (inTable) {
+          // Table just ended — ensure blank line after
+          inTable = false;
+          result.push('');
+        }
+        result.push(line);
       }
-    );
-    // Simpler approach: add blank line before any line starting with | that follows a non-empty non-table line
-    processed = processed.replace(/([^\n|])\n(\|[^\n]+\|)/g, '$1\n\n$2');
-    // Add blank line after table block (last line with |) if followed by non-empty non-table line
-    processed = processed.replace(/(\|[^\n]+\|)\n([^|\n])/g, '$1\n\n$2');
+    }
+
+    let processed = result.join('\n');
 
     // Step 2: Auto-linkify plain URLs
     processed = processed.replace(
