@@ -107,7 +107,23 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
 
     let processed = result.join('\n');
 
-    // Step 2: Auto-linkify plain URLs
+    // Step 2: Convert LaTeX math notation to $$ / $ for remark-math
+    // Handle \[ ... \] → $$ ... $$ (display math)
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$${inner}$$`);
+    // Handle \( ... \) → $ ... $ (inline math)
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
+    // Handle standalone [ ... ] with LaTeX content (display math without backslash)
+    // Only match if content looks like LaTeX (contains \frac, \int, \sum, \sqrt, etc.)
+    processed = processed.replace(/^\[\s*([\s\S]*?)\s*\]$/gm, (_m, inner) => {
+      if (/\\(?:frac|int|sum|sqrt|prod|lim|infty|partial|nabla|cdot|text|displaystyle|begin|end|left|right|bigl|bigr|zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln)/.test(inner)) {
+        return `$$${inner}$$`;
+      }
+      return _m; // Not LaTeX — leave as is
+    });
+    // Handle inline (\zeta) or (\alpha) etc. → $\zeta$ or $\alpha$
+    processed = processed.replace(/\(\\((?:zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|epsilon|lambda|mu|sigma|pi|rho|tau|eta|xi|kappa|nu|chi|iota|upsilon)(?:[^)]*))\)/g, (_m, inner) => `$\\${inner}$`);
+
+    // Step 3: Auto-linkify plain URLs
     processed = processed.replace(
       /(?<!\]\()(?<!")(?<!\()(?:^|\s)(https?:\/\/[^\s<>)"'\]]+)/gm,
       (match, url) => {
