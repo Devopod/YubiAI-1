@@ -4,6 +4,10 @@ import { voiceAPI } from '../services/api';
 import { audioManager } from '../services/audioManager';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
+import 'katex/dist/katex.min.css';
 import type { Message } from '../types';
 
 interface ChatMessageProps {
@@ -189,8 +193,46 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
           </p>
           <div className="text-zinc-200 prose prose-invert prose-sm max-w-none">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeKatex, rehypeRaw]}
               components={{
+                /* ─── HEADINGS ─── */
+                h1: ({ children, ...props }) => (
+                  <h1 className="text-2xl font-bold text-white mt-6 mb-3 pb-2 border-b border-zinc-700" {...props}>{children}</h1>
+                ),
+                h2: ({ children, ...props }) => (
+                  <h2 className="text-xl font-bold text-white mt-5 mb-2 pb-1.5 border-b border-zinc-700/50" {...props}>{children}</h2>
+                ),
+                h3: ({ children, ...props }) => (
+                  <h3 className="text-lg font-semibold text-white mt-4 mb-2" {...props}>{children}</h3>
+                ),
+                h4: ({ children, ...props }) => (
+                  <h4 className="text-base font-semibold text-zinc-200 mt-3 mb-1.5" {...props}>{children}</h4>
+                ),
+                h5: ({ children, ...props }) => (
+                  <h5 className="text-sm font-semibold text-zinc-300 mt-3 mb-1" {...props}>{children}</h5>
+                ),
+                h6: ({ children, ...props }) => (
+                  <h6 className="text-xs font-semibold text-zinc-400 mt-2 mb-1 uppercase tracking-wide" {...props}>{children}</h6>
+                ),
+
+                /* ─── PARAGRAPHS ─── */
+                p: ({ children, ...props }) => (
+                  <p className="my-2 leading-relaxed text-zinc-200" {...props}>{children}</p>
+                ),
+
+                /* ─── BOLD / ITALIC / STRIKETHROUGH ─── */
+                strong: ({ children, ...props }) => (
+                  <strong className="font-bold text-white" {...props}>{children}</strong>
+                ),
+                em: ({ children, ...props }) => (
+                  <em className="italic text-zinc-300" {...props}>{children}</em>
+                ),
+                del: ({ children, ...props }) => (
+                  <del className="line-through text-zinc-500" {...props}>{children}</del>
+                ),
+
+                /* ─── LINKS ─── */
                 a: ({ href, children, ...props }) => (
                   <a
                     href={href}
@@ -202,6 +244,76 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
                     {children}
                   </a>
                 ),
+
+                /* ─── IMAGES ─── */
+                img: ({ src, alt, ...props }) => (
+                  <span className="block my-3">
+                    <img
+                      src={src}
+                      alt={alt || 'image'}
+                      className="max-w-full h-auto rounded-lg border border-zinc-700 shadow-lg"
+                      loading="lazy"
+                      {...props}
+                    />
+                    {alt && alt !== 'image' && (
+                      <span className="block text-xs text-zinc-500 mt-1 text-center italic">{alt}</span>
+                    )}
+                  </span>
+                ),
+
+                /* ─── BLOCKQUOTES ─── */
+                blockquote: ({ children, ...props }) => (
+                  <blockquote
+                    className="border-l-4 border-emerald-500 bg-zinc-800/60 pl-4 pr-3 py-2 my-3 rounded-r-lg text-zinc-300 italic"
+                    {...props}
+                  >
+                    {children}
+                  </blockquote>
+                ),
+
+                /* ─── LISTS ─── */
+                ul: ({ children, ...props }) => (
+                  <ul className="list-disc list-outside ml-6 my-2 space-y-1 text-zinc-200 marker:text-emerald-500" {...props}>{children}</ul>
+                ),
+                ol: ({ children, ...props }) => (
+                  <ol className="list-decimal list-outside ml-6 my-2 space-y-1 text-zinc-200 marker:text-emerald-500" {...props}>{children}</ol>
+                ),
+                li: ({ children, className, ...props }) => {
+                  const isTaskItem = className?.includes('task-list-item');
+                  return (
+                    <li className={`leading-relaxed ${isTaskItem ? 'list-none -ml-6 flex items-start gap-2' : ''}`} {...props}>
+                      {children}
+                    </li>
+                  );
+                },
+
+                /* ─── TASK LIST CHECKBOX ─── */
+                input: ({ type, checked, ...props }) => {
+                  if (type === 'checkbox') {
+                    return (
+                      <span
+                        className={`inline-flex items-center justify-center w-4 h-4 rounded border mt-1 flex-shrink-0 ${
+                          checked ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-zinc-600 bg-zinc-800'
+                        }`}
+                        {...props}
+                      >
+                        {checked && (
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </span>
+                    );
+                  }
+                  return <input type={type} checked={checked} {...props} />;
+                },
+
+                /* ─── HORIZONTAL RULE ─── */
+                hr: ({ ...props }) => (
+                  <hr className="my-6 border-0 h-px bg-gradient-to-r from-transparent via-zinc-600 to-transparent" {...props} />
+                ),
+
+                /* ─── TABLES ─── */
                 table: ({ children, ...props }) => (
                   <div className="overflow-x-auto my-4 rounded-lg border border-zinc-600">
                     <table className="min-w-full border-collapse text-sm" {...props}>
@@ -228,12 +340,13 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
                 tr: ({ children, ...props }) => (
                   <tr className="hover:bg-zinc-700/40 transition-colors even:bg-zinc-800/30" {...props}>{children}</tr>
                 ),
+                /* ─── CODE (inline + block) ─── */
                 code: ({ className, children, ...props }) => {
                   const match = /language-(\w+)/.exec(className || '');
                   const isInline = !match;
                   const codeString = String(children).replace(/\n$/, '');
                   return isInline ? (
-                    <code className="bg-zinc-700 px-1.5 py-0.5 rounded text-sm text-emerald-300" {...props}>
+                    <code className="bg-zinc-700 px-1.5 py-0.5 rounded text-sm text-emerald-300 font-mono" {...props}>
                       {children}
                     </code>
                   ) : (
@@ -245,6 +358,55 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
                     />
                   );
                 },
+
+                /* ─── PRE (wraps code blocks) ─── */
+                pre: ({ children }) => (
+                  <div>{children}</div>
+                ),
+
+                /* ─── DETAILS / SUMMARY (collapsible) ─── */
+                details: ({ children, ...props }) => (
+                  <details className="my-3 bg-zinc-800/50 border border-zinc-700 rounded-lg overflow-hidden" {...props}>
+                    {children}
+                  </details>
+                ),
+                summary: ({ children, ...props }) => (
+                  <summary className="px-4 py-2 cursor-pointer font-semibold text-zinc-200 hover:bg-zinc-700/50 transition-colors select-none" {...props}>
+                    {children}
+                  </summary>
+                ),
+
+                /* ─── SUBSCRIPT / SUPERSCRIPT ─── */
+                sub: ({ children, ...props }) => (
+                  <sub className="text-xs text-zinc-400" {...props}>{children}</sub>
+                ),
+                sup: ({ children, ...props }) => (
+                  <sup className="text-xs text-emerald-400 ml-0.5" {...props}>{children}</sup>
+                ),
+
+                /* ─── KEYBOARD INPUT ─── */
+                kbd: ({ children, ...props }) => (
+                  <kbd className="inline-block px-2 py-0.5 text-xs font-mono font-semibold text-zinc-300 bg-zinc-700 border border-zinc-600 rounded shadow-sm" {...props}>
+                    {children}
+                  </kbd>
+                ),
+
+                /* ─── MARK (highlight) ─── */
+                mark: ({ children, ...props }) => (
+                  <mark className="bg-yellow-500/30 text-yellow-200 px-1 rounded" {...props}>{children}</mark>
+                ),
+
+                /* ─── ABBREVIATION ─── */
+                abbr: ({ children, title, ...props }) => (
+                  <abbr className="underline decoration-dotted decoration-zinc-500 cursor-help text-zinc-200" title={title} {...props}>
+                    {children}
+                  </abbr>
+                ),
+
+                /* ─── SECTION / DIV ─── */
+                section: ({ children, ...props }) => (
+                  <section className="my-2" {...props}>{children}</section>
+                ),
               }}
             >
               {displayContent}
