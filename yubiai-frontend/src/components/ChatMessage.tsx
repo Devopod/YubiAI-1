@@ -50,15 +50,33 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
   const showContinue = !isUser && message.content.includes('[CONTINUE_AVAILABLE]');
   const rawContent = message.content.replace(/\[CONTINUE_AVAILABLE\]/g, '').trimEnd();
   
-  // Auto-linkify plain URLs — memoized to avoid re-computing on every render
-  const displayContent = useMemo(() => rawContent.replace(
-    /(?<!\]\()(?<!")(?<!\()(?:^|\s)(https?:\/\/[^\s<>)"'\]]+)/gm,
-    (match, url) => {
-      const leading = match.startsWith(' ') || match.startsWith('\n') ? match[0] : '';
-      const cleanUrl = url.trim();
-      return `${leading}[${cleanUrl}](${cleanUrl})`;
-    }
-  ), [rawContent]);
+  // Pre-process content: fix tables + auto-linkify URLs
+  const displayContent = useMemo(() => {
+    // Step 1: Ensure blank lines around markdown tables so remark-gfm parses them
+    let processed = rawContent.replace(
+      /(^|\n)([^\n]*\|[^\n]*\n)(\|[-:\s|]+\|[^\n]*\n)((?:\|[^\n]*\n)*)/gm,
+      (match, prefix) => {
+        const trimmedPrefix = prefix.replace(/\n$/, '');
+        const needsLeadingBlank = trimmedPrefix.length > 0 && !trimmedPrefix.endsWith('\n');
+        return (needsLeadingBlank ? '\n\n' : prefix) + match.slice(prefix.length) + '\n';
+      }
+    );
+    // Simpler approach: add blank line before any line starting with | that follows a non-empty non-table line
+    processed = processed.replace(/([^\n|])\n(\|[^\n]+\|)/g, '$1\n\n$2');
+    // Add blank line after table block (last line with |) if followed by non-empty non-table line
+    processed = processed.replace(/(\|[^\n]+\|)\n([^|\n])/g, '$1\n\n$2');
+
+    // Step 2: Auto-linkify plain URLs
+    processed = processed.replace(
+      /(?<!\]\()(?<!")(?<!\()(?:^|\s)(https?:\/\/[^\s<>)"'\]]+)/gm,
+      (match, url) => {
+        const leading = match.startsWith(' ') || match.startsWith('\n') ? match[0] : '';
+        const cleanUrl = url.trim();
+        return `${leading}[${cleanUrl}](${cleanUrl})`;
+      }
+    );
+    return processed;
+  }, [rawContent]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -148,27 +166,30 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
                   </a>
                 ),
                 table: ({ children, ...props }) => (
-                  <div className="overflow-x-auto my-3">
+                  <div className="overflow-x-auto my-4 rounded-lg border border-zinc-600">
                     <table className="min-w-full border-collapse text-sm" {...props}>
                       {children}
                     </table>
                   </div>
                 ),
                 thead: ({ children, ...props }) => (
-                  <thead className="bg-zinc-700/50" {...props}>{children}</thead>
+                  <thead className="bg-zinc-700/80" {...props}>{children}</thead>
+                ),
+                tbody: ({ children, ...props }) => (
+                  <tbody className="divide-y divide-zinc-700" {...props}>{children}</tbody>
                 ),
                 th: ({ children, ...props }) => (
-                  <th className="border border-zinc-600 px-3 py-2 text-left text-xs font-semibold text-zinc-300 uppercase tracking-wider" {...props}>
+                  <th className="border-b border-zinc-600 px-4 py-2.5 text-left text-xs font-bold text-emerald-400 uppercase tracking-wider" {...props}>
                     {children}
                   </th>
                 ),
                 td: ({ children, ...props }) => (
-                  <td className="border border-zinc-700 px-3 py-2 text-zinc-300" {...props}>
+                  <td className="px-4 py-2.5 text-zinc-300 border-b border-zinc-700/50" {...props}>
                     {children}
                   </td>
                 ),
                 tr: ({ children, ...props }) => (
-                  <tr className="hover:bg-zinc-700/30 transition-colors" {...props}>{children}</tr>
+                  <tr className="hover:bg-zinc-700/40 transition-colors even:bg-zinc-800/30" {...props}>{children}</tr>
                 ),
                 code: ({ className, children, ...props }) => {
                   const match = /language-(\w+)/.exec(className || '');
