@@ -1,18 +1,20 @@
 import axios from 'axios';
 import type { TokenResponse, Chat, ChatWithMessages, Message, APIKey } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Same-origin mode: empty string means API calls go to the same origin as the page.
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 const api = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Add auth token to requests
+// Add JWT auth token via X-Auth-Token header.
+// This avoids conflicts with tunnel/proxy Basic auth that occupies the Authorization header.
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers['X-Auth-Token'] = `Bearer ${token}`;
   }
   return config;
 });

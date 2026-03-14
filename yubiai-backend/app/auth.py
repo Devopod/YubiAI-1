@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from itsdangerous import URLSafeTimedSerializer
@@ -63,16 +63,39 @@ def verify_reset_token(token: str, max_age: int = 3600) -> Optional[str]:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
     db: Session = Depends(get_db),
 ) -> User:
+    """Extract JWT from X-Auth-Token header (preferred) or Authorization: Bearer header.
+
+    X-Auth-Token is used to avoid conflicts with tunnel/proxy Basic auth
+    that may occupy the Authorization header.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    token: str | None = None
+
+    # Prefer X-Auth-Token header (avoids conflict with tunnel Basic auth)
+    x_auth = request.headers.get("X-Auth-Token")
+    if x_auth:
+        # Accept both raw token and "Bearer <token>" format
+        token = x_auth.removeprefix("Bearer ").strip()
+
+    # Fallback to standard Authorization: Bearer header
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.removeprefix("Bearer ").strip()
+
+    if not token:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception

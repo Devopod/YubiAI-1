@@ -16,13 +16,18 @@ from app.routes.voice_routes import router as voice_router
 
 app = FastAPI(title="YubiAI API", version="1.0.0", description="YubiAI - AI Assistant by Devopods")
 
-# Disable CORS. Do not remove this for full-stack development.
+# CORS configuration: allow frontend origins for cross-origin API access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=[
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:8000",  # Same-origin dev
+        "https://yubiai-chatbot-app-hawodg08.devinapps.com",  # Deployed frontend
+    ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*", "X-Auth-Token"],  # Include custom auth header
+    expose_headers=["X-Auth-Token"],
 )
 
 # Include routers
