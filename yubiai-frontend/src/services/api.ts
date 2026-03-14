@@ -76,6 +76,11 @@ export const voiceAPI = {
   languages: () => api.get('/api/voice/languages'),
 };
 
+// Suggestions
+export const suggestionsAPI = {
+  get: () => api.get<{ prompts: string[] }>('/api/suggestions/'),
+};
+
 // API Keys
 export const apiKeyAPI = {
   list: () => api.get<APIKey[]>('/api/keys/'),

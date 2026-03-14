@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Loader2, Bot, Sparkles, Mic, Plus, X, FileText, ImageIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { chatAPI } from '../services/api';
+import { chatAPI, suggestionsAPI } from '../services/api';
 import Sidebar from '../components/Sidebar';
 import ChatMessage from '../components/ChatMessage';
 import VoiceMode from '../components/VoiceMode';
@@ -17,6 +17,12 @@ export default function ChatPage() {
   const [loadingChats, setLoadingChats] = useState(true);
   const [voiceMode, setVoiceMode] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; content: string; is_image?: boolean }[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([
+    'Write a Python function to sort a list',
+    'Explain quantum computing simply',
+    'Help me write a professional email',
+    'Create a React component for a todo app',
+  ]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -38,6 +44,16 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => { loadChats(); }, [loadChats]);
+
+  useEffect(() => {
+    suggestionsAPI.get()
+      .then((res) => {
+        if (res.data.prompts && res.data.prompts.length === 4) {
+          setSuggestions(res.data.prompts);
+        }
+      })
+      .catch(() => { /* keep defaults */ });
+  }, []);
 
   const loadChat = async (chatId: string) => {
     setCurrentChatId(chatId);
@@ -241,12 +257,7 @@ export default function ChatPage() {
                 I'm Yubi, your AI assistant by Devopods. Ask me anything - coding, writing, analysis, or just chat.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl w-full">
-                {[
-                  'Write a Python function to sort a list',
-                  'Explain quantum computing simply',
-                  'Help me write a professional email',
-                  'Create a React component for a todo app',
-                ].map((suggestion) => (
+                {suggestions.map((suggestion) => (
                   <button
                     key={suggestion}
                     onClick={() => { setInput(suggestion); }}
