@@ -234,7 +234,7 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
           <div className="text-zinc-200 prose prose-invert prose-sm max-w-none">
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex, rehypeRaw]}
+              rehypePlugins={[rehypeRaw, rehypeKatex]}
               components={{
                 /* ─── HEADINGS ─── */
                 h1: ({ children, ...props }) => (
