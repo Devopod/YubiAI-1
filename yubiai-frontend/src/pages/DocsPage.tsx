@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bot, ArrowLeft, Book, Code, Key, Zap, Globe, Copy, Check } from 'lucide-react';
 
-const API_BASE_URL = 'https://app-nsediprx.fly.dev';
-const APP_URL = 'https://yubiai-chatbot-ss3lx2pw.devinapps.com';
+const API_BASE_URL = window.location.origin;
+const APP_URL = window.location.origin;
 
 const sections = [
   { id: 'overview', label: 'Overview' },
