@@ -107,23 +107,34 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
 
     let processed = result.join('\n');
 
-    // Step 2: Convert LaTeX math notation to $$ / $ for remark-math
-    // Handle \[ ... \] → $$ ... $$ (display math)
+    // Step 2: Fix LaTeX environments (\begin{...}...\end{...})
+    // The AI sometimes scatters $$ inside environments like \begin{aligned}...\end{aligned}
+    // We need to: strip internal $$, wrap the whole environment in $$...$$
+    processed = processed.replace(
+      /(\$\$\s*)?\\begin\{(aligned|align|equation|gather|multline|cases|pmatrix|bmatrix|vmatrix|matrix|array|split)\}([\s\S]*?)\\end\{\2\}(\s*\$\$)?/g,
+      (_m, _leadingDollar, envName, inner, _trailingDollar) => {
+        // Strip any $$ found inside the environment content
+        const cleaned = inner.replace(/\$\$/g, '');
+        return `$$\n\\begin{${envName}}${cleaned}\\end{${envName}}\n$$`;
+      }
+    );
+
+    // Step 2b: Convert LaTeX math notation to $$ / $ for remark-math
+    // Handle \[ ... \] -> $$ ... $$ (display math)
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$${inner}$$`);
-    // Handle \( ... \) → $ ... $ (inline math)
+    // Handle \( ... \) -> $ ... $ (inline math)
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
     // Handle standalone [ ... ] with LaTeX content (display math without backslash)
-    // Only match if content looks like LaTeX (contains \frac, \int, \sum, \sqrt, etc.)
     processed = processed.replace(/^\[\s*([\s\S]*?)\s*\]$/gm, (_m, inner) => {
       if (/\\(?:frac|int|sum|sqrt|prod|lim|infty|partial|nabla|cdot|text|displaystyle|begin|end|left|right|bigl|bigr|zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln)/.test(inner)) {
         return `$$${inner}$$`;
       }
-      return _m; // Not LaTeX — leave as is
+      return _m;
     });
-    // Handle inline (\zeta) or (\alpha) etc. → $\zeta$ or $\alpha$
+    // Handle inline (\zeta) or (\alpha) etc.
     processed = processed.replace(/\(\\((?:zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|epsilon|lambda|mu|sigma|pi|rho|tau|eta|xi|kappa|nu|chi|iota|upsilon)(?:[^)]*))\)/g, (_m, inner) => `$\\${inner}$`);
 
-    // Step 2b: Catch raw LaTeX lines that aren't wrapped in any delimiters
+    // Step 2c: Catch raw LaTeX lines that aren't wrapped in any delimiters
     // If a line starts with a LaTeX command and contains typical math patterns, wrap in $$
     const latexCommandPattern = /\\(?:frac|int|sum|sqrt|prod|lim|infty|partial|nabla|cdot|text|displaystyle|begin|end|left|right|bigl|bigr|zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln|vec|hat|bar|dot|ddot|tilde|mathbb|mathcal|mathbf|mathrm|operatorname|binom)/;
     processed = processed.split('\n').map(line => {
@@ -146,6 +157,9 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
       }
       return line;
     }).join('\n');
+
+    // Step 2d: Clean up double-wrapped $$$$ (from multiple preprocessing steps)
+    processed = processed.replace(/\$\$\$\$/g, '$$');
 
     // Step 3: Auto-linkify plain URLs
     processed = processed.replace(
