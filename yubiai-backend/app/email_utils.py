@@ -1,10 +1,14 @@
 import os
+import json
+import base64
 import logging
 import smtplib
 import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Optional
+from pathlib import Path
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +19,33 @@ MAIL_FROM = os.getenv("MAIL_FROM", "noreply@yubiai.com")
 MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp.gmail.com")
 MAIL_PORT = int(os.getenv("MAIL_PORT", "465"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+# Google OAuth config for Gmail API (HTTPS-based email sending)
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
+# Path to store Gmail API refresh token
+_TOKEN_FILE = Path(__file__).resolve().parent.parent / ".gmail_token.json"
+
+
+def _load_gmail_refresh_token() -> str:
+    """Load Gmail API refresh token from file or env."""
+    token = os.getenv("GMAIL_REFRESH_TOKEN", "")
+    if token:
+        return token
+    if _TOKEN_FILE.exists():
+        try:
+            data = json.loads(_TOKEN_FILE.read_text())
+            return data.get("refresh_token", "")
+        except Exception:
+            return ""
+    return ""
+
+
+def save_gmail_refresh_token(refresh_token: str) -> None:
+    """Persist Gmail API refresh token to file."""
+    _TOKEN_FILE.write_text(json.dumps({"refresh_token": refresh_token}))
+    logger.info("Gmail API refresh token saved")
 
 
 def _send_email_smtp(to_email: str, subject: str, html_body: str) -> bool:
@@ -27,7 +58,6 @@ def _send_email_smtp(to_email: str, subject: str, html_body: str) -> bool:
         msg.attach(MIMEText(html_body, "html"))
 
         context = ssl.create_default_context()
-        # Try SSL first (port 465), then TLS (port 587)
         port = MAIL_PORT
         if port == 465:
             with smtplib.SMTP_SSL(MAIL_SERVER, port, context=context, timeout=15) as server:
@@ -45,12 +75,78 @@ def _send_email_smtp(to_email: str, subject: str, html_body: str) -> bool:
         return False
 
 
+def _send_email_gmail_api(to_email: str, subject: str, html_body: str) -> bool:
+    """Send email using Gmail REST API over HTTPS (port 443).
+
+    This bypasses SMTP port restrictions by using the Gmail API
+    which works over standard HTTPS.
+    """
+    refresh_token = _load_gmail_refresh_token()
+    if not refresh_token or not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        logger.warning("Gmail API not configured (missing refresh token or client credentials)")
+        return False
+
+    try:
+        token_resp = httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=15,
+        )
+        if token_resp.status_code != 200:
+            logger.error(f"Gmail token refresh failed: {token_resp.text}")
+            return False
+
+        access_token = token_resp.json().get("access_token")
+        if not access_token:
+            logger.error("No access_token in Gmail token response")
+            return False
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"YubiAI <{MAIL_FROM}>"
+        msg["To"] = to_email
+        msg.attach(MIMEText(html_body, "html"))
+
+        raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+
+        send_resp = httpx.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"raw": raw_message},
+            timeout=15,
+        )
+        if send_resp.status_code == 200:
+            logger.info(f"Email sent to {to_email} via Gmail API")
+            return True
+        else:
+            logger.error(f"Gmail API send failed ({send_resp.status_code}): {send_resp.text}")
+            return False
+
+    except Exception as e:
+        logger.error(f"Gmail API send error: {e}")
+        return False
+
+
+def _send_email(to_email: str, subject: str, html_body: str) -> bool:
+    """Try SMTP first, then fall back to Gmail API over HTTPS."""
+    if MAIL_USERNAME and MAIL_PASSWORD:
+        if _send_email_smtp(to_email, subject, html_body):
+            return True
+        logger.info("SMTP failed, trying Gmail API fallback...")
+
+    return _send_email_gmail_api(to_email, subject, html_body)
+
+
 async def send_verification_email(email: str, token: str, name: str) -> bool:
     """Send verification email. Returns True if sent successfully."""
     verification_url = f"{FRONTEND_URL}/verify-email?token={token}"
 
-    # If no mail credentials configured, log the verification URL
-    if not MAIL_USERNAME or not MAIL_PASSWORD:
+    if not MAIL_USERNAME and not MAIL_PASSWORD and not _load_gmail_refresh_token():
         logger.info(f"[DEV MODE] Verification URL for {email}: {verification_url}")
         print(f"\n{'='*60}")
         print(f"VERIFICATION EMAIL for {email}")
@@ -86,7 +182,7 @@ async def send_verification_email(email: str, token: str, name: str) -> bool:
     </html>
     """
 
-    sent = _send_email_smtp(email, "Verify your YubiAI account", html_body)
+    sent = _send_email(email, "Verify your YubiAI account", html_body)
     if not sent:
         logger.warning(f"Could not send verification email to {email}")
         print(f"\n[FALLBACK] Verification URL for {email}: {verification_url}")
@@ -94,16 +190,16 @@ async def send_verification_email(email: str, token: str, name: str) -> bool:
 
 
 async def send_password_reset_email(email: str, token: str, name: str) -> bool:
-    """Send password reset email."""
+    """Send password reset email. Returns True if actually sent."""
     reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
 
-    if not MAIL_USERNAME or not MAIL_PASSWORD:
+    if not MAIL_USERNAME and not MAIL_PASSWORD and not _load_gmail_refresh_token():
         logger.info(f"[DEV MODE] Password reset URL for {email}: {reset_url}")
         print(f"\n{'='*60}")
         print(f"PASSWORD RESET EMAIL for {email}")
         print(f"URL: {reset_url}")
         print(f"{'='*60}\n")
-        return True
+        return False
 
     html_body = f"""
     <html>
@@ -133,8 +229,8 @@ async def send_password_reset_email(email: str, token: str, name: str) -> bool:
     </html>
     """
 
-    sent = _send_email_smtp(email, "Reset your YubiAI password", html_body)
+    sent = _send_email(email, "Reset your YubiAI password", html_body)
     if not sent:
         logger.warning(f"Could not send reset email to {email}")
         print(f"\n[FALLBACK] Reset URL for {email}: {reset_url}")
-    return True
+    return sent

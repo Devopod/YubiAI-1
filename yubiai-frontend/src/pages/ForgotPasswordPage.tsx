@@ -1,17 +1,24 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, Loader2, ArrowLeft } from 'lucide-react';
+import { Bot, Loader2, ArrowLeft, ExternalLink } from 'lucide-react';
 import { authAPI } from '../services/api';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [resetUrl, setResetUrl] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    try { await authAPI.forgotPassword(email); } catch { /* ignore */ }
+    try {
+      const resp = await authAPI.forgotPassword(email);
+      const data = resp.data as { email_sent?: boolean; reset_url?: string };
+      if (data.email_sent === false && data.reset_url) {
+        setResetUrl(data.reset_url);
+      }
+    } catch { /* ignore */ }
     setSent(true);
     setLoading(false);
   };
@@ -28,7 +35,17 @@ export default function ForgotPasswordPage() {
         <div className="bg-zinc-800 rounded-2xl p-6 shadow-xl border border-zinc-700">
           {sent ? (
             <div className="text-center py-4">
-              <p className="text-zinc-200">If an account exists with that email, we've sent a password reset link.</p>
+              {resetUrl ? (
+                <>
+                  <p className="text-zinc-200 mb-4">Click the button below to reset your password:</p>
+                  <a href={resetUrl}
+                    className="inline-flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg">
+                    <ExternalLink size={16} /> Reset Password
+                  </a>
+                </>
+              ) : (
+                <p className="text-zinc-200">If an account exists with that email, we've sent a password reset link.</p>
+              )}
               <Link to="/login" className="inline-flex items-center gap-2 mt-4 text-emerald-400 hover:text-emerald-300">
                 <ArrowLeft size={16} /> Back to login
               </Link>

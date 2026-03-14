@@ -1,7 +1,9 @@
 import os
 import logging
+import urllib.parse
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -17,11 +19,19 @@ from app.auth import (
     create_verification_token, verify_email_token,
     create_reset_token, verify_reset_token, get_current_user,
 )
-from app.email_utils import send_verification_email, send_password_reset_email
+from app.email_utils import (
+    send_verification_email, send_password_reset_email,
+    save_gmail_refresh_token, FRONTEND_URL,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
+# Gmail API OAuth2 scopes and redirect
+_GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.send"
+_GMAIL_REDIRECT_PATH = "/api/auth/gmail-callback"
 
 
 @router.post("/signup", response_model=TokenResponse)
@@ -177,11 +187,20 @@ async def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get
     user = db.query(User).filter(User.email == data.email).first()
     if not user:
         # Don't reveal if user exists or not
-        return {"message": "If the email exists, a reset link has been sent"}
+        return {"message": "If the email exists, a reset link has been sent", "email_sent": True}
 
     token = create_reset_token(data.email)
-    await send_password_reset_email(data.email, token, user.name)
-    return {"message": "If the email exists, a reset link has been sent"}
+    sent = await send_password_reset_email(data.email, token, user.name)
+    if sent:
+        return {"message": "If the email exists, a reset link has been sent", "email_sent": True}
+    else:
+        # Email delivery failed (SMTP blocked etc.) — return reset URL directly
+        reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
+        return {
+            "message": "Email delivery is unavailable. Use the link below to reset your password.",
+            "email_sent": False,
+            "reset_url": reset_url,
+        }
 
 
 @router.post("/reset-password")
@@ -207,6 +226,69 @@ async def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_d
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
+
+
+@router.get("/gmail-setup")
+async def gmail_setup():
+    """Generate Google OAuth2 authorization URL for Gmail API access.
+
+    Navigate to the returned URL in a browser to authorize the app
+    to send emails via Gmail API (bypasses SMTP port restrictions).
+    """
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID not configured")
+
+    redirect_uri = FRONTEND_URL.rstrip("/") + _GMAIL_REDIRECT_PATH
+    params = urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "scope": _GMAIL_SCOPES,
+        "response_type": "code",
+        "access_type": "offline",
+        "prompt": "consent",
+    })
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+    return {"auth_url": auth_url, "redirect_uri": redirect_uri}
+
+
+@router.get("/gmail-callback")
+async def gmail_callback(code: str = Query(...)):
+    """Handle Google OAuth2 callback for Gmail API.
+
+    Exchanges the authorization code for tokens and stores the refresh token.
+    """
+    redirect_uri = FRONTEND_URL.rstrip("/") + _GMAIL_REDIRECT_PATH
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=15,
+        )
+
+    if resp.status_code != 200:
+        logger.error(f"Gmail token exchange failed: {resp.text}")
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {resp.text}")
+
+    tokens = resp.json()
+    refresh_token = tokens.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(
+            status_code=400,
+            detail="No refresh token received. Try revoking app access at https://myaccount.google.com/permissions and retry.",
+        )
+
+    save_gmail_refresh_token(refresh_token)
+    logger.info("Gmail API refresh token saved successfully")
+
+    # Redirect to the app home page with a success message
+    return RedirectResponse(url=f"{FRONTEND_URL}/?gmail_setup=success")
 
 
 @router.delete("/delete-account")
