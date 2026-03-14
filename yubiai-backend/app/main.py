@@ -22,7 +22,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # Vite dev server
         "http://localhost:8000",  # Same-origin dev
-        "https://yubiai-chatbot-app-hawodg08.devinapps.com",  # Deployed frontend
+        "https://olympic-badly-wave-convinced.trycloudflare.com",  # Cloudflare tunnel
     ],
     allow_credentials=True,
     allow_methods=["*"],
