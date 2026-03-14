@@ -105,6 +105,17 @@ SYSTEM_PROMPT = (
     "Sheikh Hasina resigned on 5 Aug 2024 and fled to India. "
     "Use these facts ONLY when the user asks about Bangladesh politics/PM/government. Do NOT volunteer this information unprompted.\n\n"
 
+    "### Weather & Rain Prediction\n"
+    "- When [LIVE WEATHER DATA] is provided, use it to give accurate, real-time weather information.\n"
+    "- Present weather data naturally in a friendly, conversational way — mention temperature, conditions, humidity, wind, etc.\n"
+    "- For rain prediction questions ('Will it rain today?', 'Aaj ki brishti hobe?'), use the hourly rain probability data to give a detailed prediction.\n"
+    "- If rain probability is >60%, confidently say it's likely to rain and suggest carrying an umbrella.\n"
+    "- If rain probability is <20%, say it's unlikely to rain.\n"
+    "- For 20-60%, say there's a moderate chance and advise being prepared.\n"
+    "- Include the 3-day forecast when relevant.\n"
+    "- NEVER mention internal tags like [LIVE WEATHER DATA] in your response.\n"
+    "- If no weather data is provided but user asks about weather in a specific city/country, use your general knowledge.\n\n"
+
     "### Interview or Media Requests\n"
     "For interview/TV/media requests, respond professionally in 2-4 sentences. "
     "Direct to requirement@devopod.co.in or ayoob@devopod.co.in for founder-level requests.\n\n"
@@ -446,20 +457,126 @@ async def delete_chat(
     return {"message": "Chat deleted"}
 
 
-async def _get_country_from_ip(ip: str) -> str:
-    """Get country name from IP address using free geolocation API."""
+async def _get_location_from_ip(ip: str) -> dict:
+    """Get location details (country, city, lat, lon) from IP address using free geolocation API."""
     if not ip or ip in ("127.0.0.1", "::1", "localhost"):
-        return ""
+        return {}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,countryCode")
+            resp = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,city,lat,lon,timezone")
             if resp.status_code == 200:
                 data_resp = resp.json()
                 if data_resp.get("status") == "success":
-                    return data_resp.get("country", "")
+                    return {
+                        "country": data_resp.get("country", ""),
+                        "city": data_resp.get("city", ""),
+                        "lat": data_resp.get("lat"),
+                        "lon": data_resp.get("lon"),
+                        "timezone": data_resp.get("timezone", ""),
+                    }
     except Exception as e:
         logger.warning(f"IP geolocation failed for {ip}: {e}")
-    return ""
+    return {}
+
+
+def _is_weather_query(message: str) -> bool:
+    """Detect if the user is asking about weather, rain, temperature, etc."""
+    msg = message.strip().lower()
+    return bool(re.search(
+        r'\b(weather|rain|rainy|raining|sunny|cloudy|cloud|storm|snow|snowing|temperature|temp|'
+        r'forecast|humidity|wind|hot|cold|warm|freezing|heat|heatwave|monsoon|cyclone|tornado|'
+        r'umbrella|brishti|bristi|roud|dhup|grom|tufan|thand|gorom|abohaowa|mosam|mausam)\b',
+        msg, re.IGNORECASE
+    ))
+
+
+async def _get_weather_data(lat: float, lon: float, city: str, country: str) -> str:
+    """Fetch current weather and forecast from Open-Meteo (free, no API key)."""
+    try:
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m",
+            "hourly": "temperature_2m,precipitation_probability,precipitation,rain,weather_code,cloud_cover",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,rain_sum,precipitation_probability_max,sunrise,sunset",
+            "timezone": "auto",
+            "forecast_days": 3,
+        }
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get("https://api.open-meteo.com/v1/forecast", params=params)
+            if resp.status_code != 200:
+                logger.error(f"Open-Meteo API error: {resp.status_code}")
+                return ""
+            data = resp.json()
+
+        # Parse current weather
+        current = data.get("current", {})
+        wmo_codes = {
+            0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+            45: "Foggy", 48: "Depositing rime fog",
+            51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
+            61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
+            66: "Light freezing rain", 67: "Heavy freezing rain",
+            71: "Slight snowfall", 73: "Moderate snowfall", 75: "Heavy snowfall",
+            77: "Snow grains", 80: "Slight rain showers", 81: "Moderate rain showers",
+            82: "Violent rain showers", 85: "Slight snow showers", 86: "Heavy snow showers",
+            95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail",
+        }
+        weather_desc = wmo_codes.get(current.get("weather_code", -1), "Unknown")
+
+        weather_text = (
+            f"[LIVE WEATHER DATA for {city}, {country}]\n"
+            f"Current conditions:\n"
+            f"- Weather: {weather_desc}\n"
+            f"- Temperature: {current.get('temperature_2m', 'N/A')}°C (feels like {current.get('apparent_temperature', 'N/A')}°C)\n"
+            f"- Humidity: {current.get('relative_humidity_2m', 'N/A')}%\n"
+            f"- Wind: {current.get('wind_speed_10m', 'N/A')} km/h\n"
+            f"- Cloud cover: {current.get('cloud_cover', 'N/A')}%\n"
+            f"- Current precipitation: {current.get('precipitation', 0)} mm\n"
+            f"- Current rain: {current.get('rain', 0)} mm\n"
+        )
+
+        # Parse daily forecast
+        daily = data.get("daily", {})
+        daily_times = daily.get("time", [])
+        if daily_times:
+            weather_text += "\nForecast:\n"
+            for i, day in enumerate(daily_times[:3]):
+                day_code = daily.get("weather_code", [0])[i] if i < len(daily.get("weather_code", [])) else 0
+                day_desc = wmo_codes.get(day_code, "Unknown")
+                t_max = daily.get("temperature_2m_max", ["N/A"])[i] if i < len(daily.get("temperature_2m_max", [])) else "N/A"
+                t_min = daily.get("temperature_2m_min", ["N/A"])[i] if i < len(daily.get("temperature_2m_min", [])) else "N/A"
+                precip = daily.get("precipitation_sum", [0])[i] if i < len(daily.get("precipitation_sum", [])) else 0
+                rain_sum = daily.get("rain_sum", [0])[i] if i < len(daily.get("rain_sum", [])) else 0
+                precip_prob = daily.get("precipitation_probability_max", [0])[i] if i < len(daily.get("precipitation_probability_max", [])) else 0
+                sunrise = daily.get("sunrise", [""])[i] if i < len(daily.get("sunrise", [])) else ""
+                sunset = daily.get("sunset", [""])[i] if i < len(daily.get("sunset", [])) else ""
+                label = "Today" if i == 0 else ("Tomorrow" if i == 1 else day)
+                weather_text += (
+                    f"- {label} ({day}): {day_desc}, {t_min}°C – {t_max}°C, "
+                    f"rain probability: {precip_prob}%, precipitation: {precip}mm, rain: {rain_sum}mm, "
+                    f"sunrise: {sunrise}, sunset: {sunset}\n"
+                )
+
+        # Parse hourly precipitation probability for next 12 hours
+        hourly = data.get("hourly", {})
+        hourly_times = hourly.get("time", [])
+        hourly_precip_prob = hourly.get("precipitation_probability", [])
+        hourly_rain = hourly.get("rain", [])
+        if hourly_times and hourly_precip_prob:
+            weather_text += "\nHourly rain probability (next 12 hours):\n"
+            for i in range(min(12, len(hourly_times))):
+                t = hourly_times[i].split("T")[1] if "T" in hourly_times[i] else hourly_times[i]
+                prob = hourly_precip_prob[i] if i < len(hourly_precip_prob) else 0
+                rain_mm = hourly_rain[i] if i < len(hourly_rain) else 0
+                weather_text += f"  {t}: {prob}% chance, {rain_mm}mm\n"
+
+        weather_text += "[END WEATHER DATA]\n"
+        logger.info(f"Weather data fetched for {city}, {country}: {weather_desc}, {current.get('temperature_2m')}°C")
+        return weather_text
+    except Exception as e:
+        logger.error(f"Weather API error: {e}")
+        return ""
 
 
 # File attachment limits
@@ -576,20 +693,31 @@ async def send_message(
         f"current leaders, dates, or anything time-sensitive."
     )
 
-    # Detect user's country from IP for location-aware responses
+    # Detect user's location from IP for location-aware responses and weather
     client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
-    user_country = await _get_country_from_ip(client_ip)
+    user_location = await _get_location_from_ip(client_ip)
+    user_country = user_location.get("country", "")
+    user_city = user_location.get("city", "")
+    user_lat = user_location.get("lat")
+    user_lon = user_location.get("lon")
     location_context = ""
     if user_country:
         location_context = (
             f"\n\n### User Location\n"
-            f"The user is located in **{user_country}**. "
+            f"The user is located in **{user_city}, {user_country}**. "
             f"When they ask location-sensitive questions like 'Who is the Prime Minister?', 'Who is the President?', "
             f"'What is the capital?', 'What is the weather?' without specifying a country, "
             f"assume they are asking about {user_country} and answer accordingly. "
             f"For example, if user is in Bangladesh and asks 'Who is PM?', answer about Bangladesh's PM. "
             f"If user is in India and asks 'Who is PM?', answer about India's PM."
         )
+
+    # Fetch live weather data if user asks about weather/rain/temperature
+    weather_context = ""
+    if _is_weather_query(data.content) and user_lat is not None and user_lon is not None:
+        weather_data = await _get_weather_data(user_lat, user_lon, user_city or "Unknown", user_country or "Unknown")
+        if weather_data:
+            weather_context = f"\n\n{weather_data}"
 
     # Inject user's name so AI always knows who it's talking to
     user_name = current_user.name or "User"
@@ -637,7 +765,7 @@ async def send_message(
     except Exception as e:
         logger.error(f"Error building cross-chat memory: {e}")
 
-    system_content = SYSTEM_PROMPT + datetime_info + location_context + user_context + cross_chat_memory
+    system_content = SYSTEM_PROMPT + datetime_info + location_context + weather_context + user_context + cross_chat_memory
     if data.voice_mode:
         system_content += VOICE_MODE_INSTRUCTION
 
