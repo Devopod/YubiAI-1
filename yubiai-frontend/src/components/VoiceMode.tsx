@@ -29,7 +29,7 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
   const [error, setError] = useState('');
   const [isMuted, setIsMuted] = useState(false);
 
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatIdRef = useRef<string | null>(currentChatId);
@@ -65,7 +65,7 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
-      try { URL.revokeObjectURL(audioRef.current.src); } catch (e) { /* ignore */ }
+      try { URL.revokeObjectURL(audioRef.current.src); } catch { /* ignore */ }
       audioRef.current = null;
     }
     setIsSpeaking(false);
@@ -95,7 +95,7 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
 
           if (audioRef.current) {
             audioRef.current.pause();
-            try { URL.revokeObjectURL(audioRef.current.src); } catch (e) { /* ignore */ }
+            try { URL.revokeObjectURL(audioRef.current.src); } catch { /* ignore */ }
           }
 
           const audio = new Audio(audioUrl);
@@ -135,14 +135,14 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
 
   // Simple speech recognition: listen once → user speaks → stops naturally → process
   const startListening = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setError('Speech recognition not supported. Please use Chrome.');
       return;
     }
 
     if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch (e) { /* ignore */ }
+      try { recognitionRef.current.abort(); } catch { /* ignore */ }
     }
 
     const recognition = new SpeechRecognition();
@@ -154,7 +154,7 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
     let capturedText = '';
     setTranscript('');
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       const result = event.results[0];
       capturedText = result[0].transcript;
       setTranscript(capturedText);
@@ -169,7 +169,7 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
       }
     };
 
-    recognition.onerror = (event: any) => {
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error('Speech error:', event.error);
       setIsListening(false);
       recognitionRef.current = null;
@@ -184,8 +184,8 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
       setIsListening(true);
       setError('');
       if (!isActive) setIsActive(true);
-    } catch (e) {
-      console.error('Failed to start recognition:', e);
+    } catch (err) {
+      console.error('Failed to start recognition:', err);
     }
   }, [processAndSpeak, isActive]);
 
@@ -194,7 +194,7 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
 
   const handleClose = useCallback(() => {
     if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch (e) { /* ignore */ }
+      try { recognitionRef.current.abort(); } catch { /* ignore */ }
     }
     stopSpeaking();
     setIsActive(false);
@@ -205,10 +205,10 @@ export default function VoiceMode({ onClose, currentChatId, onNewMessage }: Voic
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) try { recognitionRef.current.abort(); } catch (e) { /* ignore */ }
+      if (recognitionRef.current) try { recognitionRef.current.abort(); } catch { /* ignore */ }
       if (audioRef.current) {
         audioRef.current.pause();
-        try { URL.revokeObjectURL(audioRef.current.src); } catch (e) { /* ignore */ }
+        try { URL.revokeObjectURL(audioRef.current.src); } catch { /* ignore */ }
       }
       if (timerRef.current) clearInterval(timerRef.current);
     };
