@@ -78,9 +78,9 @@ SYSTEM_PROMPT = (
     "- NEVER repeat your introduction in subsequent messages. The user already knows who you are.\n\n"
 
     "### URL and Link Behavior\n"
-    "- NEVER include URLs in your response unless the user EXPLICITLY asks for links, URLs, articles, or resources.\n"
-    "- If the user just asks a question (e.g., 'How to become a web developer?'), answer WITHOUT any URLs.\n"
-    "- Only include URLs when: user says 'give me links', 'share URL', 'show me resources', 'article link daw', etc.\n"
+    "- When [WEB SEARCH RESULTS (LIVE)] or [REFERENCE DATA (LIVE)] are provided, you SHOULD include relevant source URLs so users can verify and explore further.\n"
+    "- Format source URLs nicely at the end of your response under a '**Sources:**' section when web search data is used.\n"
+    "- If NO live search data is provided, do NOT include URLs unless the user explicitly asks for links.\n"
     "- NEVER make up, fabricate, or hallucinate URLs. Only share URLs from [WEB SEARCH RESULTS] or [REFERENCE DATA] provided to you.\n"
     "- When [YOUTUBE SEARCH RESULTS (LIVE)] are provided and user explicitly asked for videos, share the YouTube links with titles.\n\n"
 
@@ -114,6 +114,15 @@ SYSTEM_PROMPT = (
     "- If user writes in Banglish (e.g., 'Tumi ki bangla bolte paro?'), respond in Banglish.\n"
     "- If user writes in Bengali script, respond in Bengali script.\n"
     "- Support English, Bengali, Hindi, Urdu, Arabic, and other languages.\n\n"
+
+    "### Math & LaTeX Formatting\n"
+    "- When generating mathematical equations, formulas, or expressions, ALWAYS wrap them in LaTeX delimiters so they render correctly:\n"
+    "  * Display math (standalone equations on their own line): Use $$...$$ delimiters\n"
+    "  * Inline math (within a sentence): Use $...$ delimiters\n"
+    "- Example inline: The quadratic formula is $x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$\n"
+    "- Example display math:\n$$\\int_{0}^{\\infty} e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$\n"
+    "- NEVER output raw LaTeX commands without wrapping them in $ or $$ delimiters.\n"
+    "- Even for simple Greek letters or symbols, use inline math: $\\alpha$, $\\beta$, $\\pi$\n\n"
 
     "### Extended Code Generation\n"
     "When asked to write code, generate complete, runnable code. "
@@ -304,6 +313,76 @@ def generate_fallback_response(messages: list) -> str:
         return "Thank you for your interest! Please reach out to our communications team at requirement@devopod.co.in for interview or media engagement opportunities."
     else:
         return "I apologize, but I'm experiencing a temporary issue connecting to the AI model. Please try again in a moment — I'll be ready to help!"
+
+
+async def _llm_decide_search(user_message: str) -> bool:
+    """Use a fast LLM to decide if a web search is needed for the user's message.
+    
+    Makes a lightweight call to a small model with minimal tokens.
+    Returns True if search is needed, False otherwise.
+    """
+    global _current_key_index
+
+    if not GROQ_API_KEYS:
+        return False
+
+    # Skip obvious non-search messages
+    msg_lower = user_message.strip().lower()
+    if len(msg_lower) < 3:
+        return False
+    # Pure greetings never need search
+    if re.match(r'^(hi|hello|hey|good morning|good evening|good afternoon|good night|assalamu alaikum|salam)\b', msg_lower) and len(msg_lower) < 50:
+        return False
+
+    decision_prompt = (
+        "You are a search decision assistant. Given the user's message, decide if an internet/web search "
+        "is needed to answer it accurately.\n\n"
+        "Reply with ONLY one word: YES or NO\n\n"
+        "Say YES for: current events, recent news, specific people/leaders in government, live data "
+        "(weather, stocks, scores, prices), specific factual lookups that change over time, "
+        "product info, recent technology updates, sports results, election results.\n\n"
+        "Say NO for: coding/programming questions, math/logic problems, creative writing, "
+        "general knowledge the AI knows from training, greetings, opinions/advice, "
+        "explaining concepts, translation, follow-up questions, conversation about previous messages.\n\n"
+        f"User message: {user_message[:200]}\n\nDecision:"
+    )
+
+    decision_model = "llama-3.1-8b-instant"
+    payload = {
+        "model": decision_model,
+        "messages": [{"role": "user", "content": decision_prompt}],
+        "temperature": 0.1,
+        "max_tokens": 5,
+    }
+
+    num_keys = len(GROQ_API_KEYS)
+    for attempt in range(num_keys):
+        key_index = (_current_key_index + attempt) % num_keys
+        api_key = GROQ_API_KEYS[key_index]
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(GROQ_API_URL, json=payload, headers=headers)
+                if response.status_code == 429:
+                    continue
+                if response.status_code != 200:
+                    continue
+                result = response.json()
+                choices = result.get("choices", [])
+                if choices:
+                    answer = choices[0].get("message", {}).get("content", "").strip().upper()
+                    decision = "YES" in answer
+                    logger.info(f"LLM search decision for '{user_message[:50]}': {answer} -> {'SEARCH' if decision else 'NO SEARCH'}")
+                    return decision
+        except Exception as e:
+            logger.error(f"LLM search decision error: {e}")
+            continue
+
+    logger.warning("LLM search decision failed, defaulting to no search")
+    return False
 
 
 def generate_chat_title(user_message: str) -> str:
@@ -602,10 +681,20 @@ async def send_message(
         logger.info(f"Injected {len(data.file_contents)} file(s) into AI context (~{total_file_tokens} tokens, budget was {max_file_tokens})")
 
     # Gather external context (URLs, YouTube, web search)
+    # Use LLM to decide if web search is needed before searching
     is_continue = data.content.strip().lower() in ["continue", "continue.", "go on", "keep going"]
     if not data.voice_mode and not is_continue:
         try:
-            external_context = await gather_context(data.content, conversation_history=messages_for_ai)
+            # Step 1: Ask LLM if this query needs internet search
+            search_needed = await _llm_decide_search(data.content)
+            logger.info(f"Search decision for message: search_needed={search_needed}")
+
+            # Step 2: Gather context (with LLM decision passed through)
+            external_context = await gather_context(
+                data.content,
+                conversation_history=messages_for_ai,
+                force_search=search_needed,
+            )
             if external_context:
                 # Inject context into the last user message
                 messages_for_ai[-1]["content"] = (

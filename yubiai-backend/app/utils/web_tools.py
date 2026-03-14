@@ -1186,7 +1186,7 @@ def _extract_topic_from_history(conversation_history: list[dict]) -> str:
     return ""
 
 
-async def gather_context(user_message: str, conversation_history: list[dict] | None = None) -> str:
+async def gather_context(user_message: str, conversation_history: list[dict] | None = None, force_search: bool | None = None) -> str:
     """Analyze user message and gather external context.
 
     Searches Wikipedia and web for messages that contain a clear topic/question.
@@ -1195,6 +1195,11 @@ async def gather_context(user_message: str, conversation_history: list[dict] | N
     
     For YouTube requests that reference conversation context ("eta niye video daw"),
     uses conversation history to build the search query.
+    
+    Args:
+        force_search: If True, LLM decided search is needed — skip regex checks and search.
+                      If False, LLM decided no search needed — skip web search.
+                      If None, use existing regex-based logic (backward compatible).
     """
     urls = extract_urls(user_message)
     context_parts = []
@@ -1247,55 +1252,40 @@ async def gather_context(user_message: str, conversation_history: list[dict] | N
                     )
                 return "\n".join(context_parts)
         
-        # Skip search for follow-up/conversational messages that reference prior context
-        if _is_followup_or_conversational(user_message):
-            logger.info(f"Skipping web search for follow-up message: {user_message[:50]}...")
-            return ""
+        # Determine if web search should happen
+        # force_search=True  -> LLM said YES, always search
+        # force_search=False -> LLM said NO, skip web search
+        # force_search=None  -> use legacy regex logic
+        should_search = force_search
+        if should_search is None:
+            # Legacy path: use regex-based decision
+            if _is_followup_or_conversational(user_message):
+                logger.info(f"Skipping web search for follow-up message: {user_message[:50]}...")
+                return ""
+            should_search = _needs_web_search(user_message)
         
-        # Intelligently decide if web search is needed
-        if not _needs_web_search(user_message):
+        # Always check for YouTube requests regardless of search decision
+        stripped = re.sub(r'^(hi|hello|hey|good morning|good evening)[,!.\s]*', '', user_message, flags=re.IGNORECASE).strip()
+        if _is_youtube_request(stripped) and len(stripped) > 5:
+            topic = re.sub(
+                r'\b(youtube|video|videos|watch|dekhao|dekha|dekhte|chai|link|url|daw|dao|den|din|show|find|search|give|gaan|song|music|tutorial|clip|suggest|koro|korte|ekti|akti|niye|eta|ota|amake|amar|please|pls)\b',
+                '', stripped, flags=re.IGNORECASE
+            ).strip()
+            topic = re.sub(r'\s+', ' ', topic).strip()
+            if len(topic) < 5 and conversation_history:
+                topic = _extract_topic_from_history(conversation_history)
+            if topic and len(topic) >= 3:
+                yt_result = await search_youtube(topic)
+                if yt_result:
+                    context_parts.append(f"\n\n[YOUTUBE SEARCH RESULTS (LIVE)]:\n{yt_result}\n[END YOUTUBE RESULTS]")
+        
+        if not should_search:
             logger.info(f"Web search not needed for: {user_message[:50]}...")
-            # Still check for YouTube requests even if general search not needed
-            stripped = re.sub(r'^(hi|hello|hey|good morning|good evening)[,!.\s]*', '', user_message, flags=re.IGNORECASE).strip()
-            if _is_youtube_request(stripped) and len(stripped) > 5:
-                topic = re.sub(
-                    r'\b(youtube|video|videos|watch|dekhao|dekha|dekhte|chai|link|url|daw|dao|den|din|show|find|search|give|gaan|song|music|tutorial|clip|suggest|koro|korte|ekti|akti|niye|eta|ota|amake|amar|please|pls)\b',
-                    '', stripped, flags=re.IGNORECASE
-                ).strip()
-                topic = re.sub(r'\s+', ' ', topic).strip()
-                if len(topic) < 5 and conversation_history:
-                    topic = _extract_topic_from_history(conversation_history)
-                if topic and len(topic) >= 3:
-                    yt_result = await search_youtube(topic)
-                    if yt_result:
-                        context_parts.append(f"\n\n[YOUTUBE SEARCH RESULTS (LIVE)]:\n{yt_result}\n[END YOUTUBE RESULTS]")
             return "".join(context_parts)
         
-        # Web search IS needed — proceed
-        stripped = re.sub(r'^(hi|hello|hey|good morning|good evening)[,!.\s]*', '', user_message, flags=re.IGNORECASE).strip()
+        # Web search IS needed (LLM said YES or regex matched) — proceed
+        logger.info(f"Web search triggered for: {user_message[:50]}...")
         if len(stripped) > 5:
-            # Check if user is asking for YouTube videos
-            youtube_request = _is_youtube_request(stripped)
-
-            if youtube_request:
-                # Extract the topic from the message (remove youtube/video keywords)
-                topic = re.sub(
-                    r'\b(youtube|video|videos|watch|dekhao|dekha|dekhte|chai|link|url|daw|dao|den|din|show|find|search|give|gaan|song|music|tutorial|clip|suggest|koro|korte|ekti|akti|niye|eta|ota|amake|amar|please|pls)\b',
-                    '', stripped, flags=re.IGNORECASE
-                ).strip()
-                # Remove extra whitespace
-                topic = re.sub(r'\s+', ' ', topic).strip()
-                
-                # If topic is too short/empty, extract from conversation history
-                if len(topic) < 5 and conversation_history:
-                    topic = _extract_topic_from_history(conversation_history)
-                    logger.info(f"Using conversation context for YouTube search: {topic[:50]}")
-                
-                if topic and len(topic) >= 3:
-                    yt_result = await search_youtube(topic)
-                    if yt_result:
-                        context_parts.append(f"\n\n[YOUTUBE SEARCH RESULTS (LIVE)]:\n{yt_result}\n[END YOUTUBE RESULTS]")
-
             wiki_result = await search_wikipedia(stripped)
             web_result = await search_web(stripped)
 

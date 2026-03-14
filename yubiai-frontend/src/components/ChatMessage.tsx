@@ -123,6 +123,30 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
     // Handle inline (\zeta) or (\alpha) etc. → $\zeta$ or $\alpha$
     processed = processed.replace(/\(\\((?:zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|epsilon|lambda|mu|sigma|pi|rho|tau|eta|xi|kappa|nu|chi|iota|upsilon)(?:[^)]*))\)/g, (_m, inner) => `$\\${inner}$`);
 
+    // Step 2b: Catch raw LaTeX lines that aren't wrapped in any delimiters
+    // If a line starts with a LaTeX command and contains typical math patterns, wrap in $$
+    const latexCommandPattern = /\\(?:frac|int|sum|sqrt|prod|lim|infty|partial|nabla|cdot|text|displaystyle|begin|end|left|right|bigl|bigr|zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln|vec|hat|bar|dot|ddot|tilde|mathbb|mathcal|mathbf|mathrm|operatorname|binom)/;
+    processed = processed.split('\n').map(line => {
+      const trimmed = line.trim();
+      // Skip lines already in math delimiters, code blocks, or empty
+      if (!trimmed || trimmed.startsWith('$') || trimmed.startsWith('```') || trimmed.startsWith('|')) return line;
+      // Skip lines that are clearly not math (start with letters/words forming sentences)
+      if (/^[A-Za-z]{4,}\s/.test(trimmed) && !latexCommandPattern.test(trimmed)) return line;
+      // If the line is predominantly LaTeX (starts with \ command or has multiple LaTeX commands)
+      if (latexCommandPattern.test(trimmed)) {
+        const commandCount = (trimmed.match(/\\(?:frac|int|sum|sqrt|prod|lim|partial|nabla|cdot|left|right|begin|end|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln|vec|hat|bar|infty|pm|mp|times|div|neq|leq|geq|approx|equiv|subset|supset|cup|cap|forall|exists|in|notin|mathbb|mathcal|displaystyle|binom|operatorname)/g) || []).length;
+        // If the line has 2+ LaTeX commands and isn't already wrapped, wrap as display math
+        if (commandCount >= 2 && !trimmed.startsWith('$') && !trimmed.endsWith('$')) {
+          // Check it's not inside a sentence (no long English words before the LaTeX)
+          const beforeLatex = trimmed.split('\\')[0];
+          if (beforeLatex.length < 10 || !/[a-zA-Z]{5,}/.test(beforeLatex)) {
+            return `$$${trimmed}$$`;
+          }
+        }
+      }
+      return line;
+    }).join('\n');
+
     // Step 3: Auto-linkify plain URLs
     processed = processed.replace(
       /(?<!\]\()(?<!")(?<!\()(?:^|\s)(https?:\/\/[^\s<>)"'\]]+)/gm,
