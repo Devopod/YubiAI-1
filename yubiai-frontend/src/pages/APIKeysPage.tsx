@@ -163,21 +163,102 @@ export default function APIKeysPage() {
           </div>
         )}
 
-        {/* Quick Start */}
-        <div className="mt-12">
-          <h2 className="text-lg font-bold mb-4">Quick Start</h2>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Model Info */}
+        <div className="mt-12 mb-8">
+          <h2 className="text-lg font-bold mb-4">Available Models</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { lang: 'Python', code: `import requests\n\n# Get your API key at ${window.location.origin}/api-keys\nresponse = requests.post(\n    "${window.location.origin}/api/v1/chat",\n    headers={"Authorization": "Bearer YOUR_API_KEY"},\n    json={"message": "Hello, Yubi!"}\n)\nprint(response.json()["response"])` },
-              { lang: 'Node.js', code: `const axios = require('axios');\n\n// Get your API key at ${window.location.origin}/api-keys\nconst res = await axios.post(\n  '${window.location.origin}/api/v1/chat',\n  { message: 'Hello, Yubi!' },\n  { headers: { Authorization: 'Bearer YOUR_API_KEY' } }\n);\nconsole.log(res.data.response);` },
-              { lang: 'JavaScript', code: `// Get your API key at ${window.location.origin}/api-keys\nconst response = await fetch('${window.location.origin}/api/v1/chat', {\n  method: 'POST',\n  headers: {\n    'Content-Type': 'application/json',\n    'Authorization': 'Bearer YOUR_API_KEY'\n  },\n  body: JSON.stringify({ message: 'Hello, Yubi!' })\n});\nconst data = await response.json();\nconsole.log(data.response);` },
-              { lang: 'cURL', code: `# Get your API key at ${window.location.origin}/api-keys\ncurl -X POST ${window.location.origin}/api/v1/chat \\\\\n  -H "Content-Type: application/json" \\\\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\\\n  -d '{"message": "Hello, Yubi!"}'` },
+              { id: 'gpt-oss-120b', name: 'GPT-OSS 120B', desc: 'Most capable reasoning model', badge: 'Default' },
+              { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', desc: 'Fast & versatile general-purpose', badge: '' },
+              { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', desc: 'Ultra-fast lightweight model', badge: 'Fast' },
+              { id: 'llama3-8b-8192', name: 'Llama 3 8B', desc: 'Efficient with 8K context', badge: '' },
+            ].map((m) => (
+              <div key={m.id} className="p-3 rounded-xl bg-zinc-800 border border-zinc-700">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-medium text-sm text-zinc-200">{m.name}</span>
+                  {m.badge && <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white">{m.badge}</span>}
+                </div>
+                <p className="text-xs text-zinc-500">{m.desc}</p>
+                <code className="text-[10px] text-zinc-600 mt-1 block">{m.id}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Generation Parameters */}
+        <div className="mb-8">
+          <h2 className="text-lg font-bold mb-4">Generation Parameters</h2>
+          <div className="overflow-x-auto rounded-xl border border-zinc-700">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-zinc-800 border-b border-zinc-700">
+                  <th className="text-left py-2 px-3 text-zinc-400 font-medium">Parameter</th>
+                  <th className="text-left py-2 px-3 text-zinc-400 font-medium">Type</th>
+                  <th className="text-left py-2 px-3 text-zinc-400 font-medium">Default</th>
+                  <th className="text-left py-2 px-3 text-zinc-400 font-medium">Description</th>
+                </tr>
+              </thead>
+              <tbody className="text-zinc-300">
+                {[
+                  ['message', 'string', 'required', 'The user message to send'],
+                  ['model', 'string', '"gpt-oss-120b"', 'AI model to use'],
+                  ['system_prompt', 'string', 'null', 'Custom system prompt (overrides default)'],
+                  ['conversation_history', 'array', 'null', 'Previous messages for context'],
+                  ['temperature', 'float', '0.7', 'Randomness (0.0 = deterministic, 2.0 = creative)'],
+                  ['top_p', 'float', '0.9', 'Nucleus sampling threshold'],
+                  ['top_k', 'int', '50', 'Top-k sampling (limits vocabulary)'],
+                  ['frequency_penalty', 'float', '0.0', 'Penalize repeated tokens (-2.0 to 2.0)'],
+                  ['presence_penalty', 'float', '0.0', 'Penalize tokens already present (-2.0 to 2.0)'],
+                  ['repetition_penalty', 'float', '1.0', 'Penalize repetition (1.0 = no penalty)'],
+                  ['max_tokens', 'int', '2048', 'Max tokens to generate (up to 32768)'],
+                  ['min_tokens', 'int', '1', 'Minimum tokens to generate'],
+                  ['stop', 'array', 'null', 'Stop sequences (e.g. ["\\nUser:"])'],
+                  ['seed', 'int', 'null', 'Random seed for reproducibility'],
+                ].map(([param, type, def_, desc]) => (
+                  <tr key={param} className="border-b border-zinc-700/50">
+                    <td className="py-2 px-3 font-mono text-emerald-300 text-xs">{param}</td>
+                    <td className="py-2 px-3 text-xs">{type}</td>
+                    <td className="py-2 px-3 text-xs text-zinc-500">{def_}</td>
+                    <td className="py-2 px-3 text-xs">{desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Quick Start */}
+        <div className="mb-8">
+          <h2 className="text-lg font-bold mb-4">Quick Start</h2>
+          <div className="grid md:grid-cols-2 gap-4">
+            {[
+              { lang: 'Python', code: `import requests\n\nAPI_URL = "${window.location.origin}/api/v1/chat"\nAPI_KEY = "YOUR_API_KEY"\n\nresponse = requests.post(\n    API_URL,\n    headers={"Authorization": f"Bearer {API_KEY}"},\n    json={\n        "message": "Hello, Yubi!",\n        "model": "gpt-oss-120b",\n        "temperature": 0.7,\n        "top_p": 0.9,\n        "max_tokens": 2048\n    }\n)\ndata = response.json()\nprint(f"Model: {data['model']}")\nprint(f"Response: {data['response']}")\nprint(f"Tokens: {data['usage']['total_tokens']}")` },
+              { lang: 'Node.js', code: `const axios = require('axios');\n\nconst API_URL = '${window.location.origin}/api/v1/chat';\nconst API_KEY = 'YOUR_API_KEY';\n\nconst res = await axios.post(\n  API_URL,\n  {\n    message: 'Hello, Yubi!',\n    model: 'gpt-oss-120b',\n    temperature: 0.7,\n    top_p: 0.9,\n    max_tokens: 2048\n  },\n  { headers: { Authorization: \`Bearer \${API_KEY}\` } }\n);\nconsole.log('Model:', res.data.model);\nconsole.log('Response:', res.data.response);\nconsole.log('Tokens:', res.data.usage.total_tokens);` },
+              { lang: 'Python (Custom Prompt)', code: `import requests\n\nAPI_URL = "${window.location.origin}/api/v1/chat"\nAPI_KEY = "YOUR_API_KEY"\n\nresponse = requests.post(\n    API_URL,\n    headers={"Authorization": f"Bearer {API_KEY}"},\n    json={\n        "message": "Explain quantum computing",\n        "model": "llama-3.3-70b-versatile",\n        "system_prompt": "You are a physics professor. Explain concepts clearly.",\n        "temperature": 0.5,\n        "max_tokens": 4096,\n        "frequency_penalty": 0.3,\n        "seed": 42\n    }\n)\nprint(response.json()["response"])` },
+              { lang: 'cURL', code: `curl -X POST ${window.location.origin}/api/v1/chat \\\\\n  -H "Content-Type: application/json" \\\\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\\\n  -d '{\n    "message": "Hello, Yubi!",\n    "model": "gpt-oss-120b",\n    "temperature": 0.7,\n    "top_p": 0.9,\n    "max_tokens": 2048\n  }'` },
             ].map((example) => (
               <div key={example.lang} className="rounded-xl bg-zinc-800 border border-zinc-700 overflow-hidden">
                 <div className="px-4 py-2 bg-zinc-700 text-sm font-medium text-zinc-300">{example.lang}</div>
                 <pre className="p-4 text-xs text-zinc-300 overflow-x-auto"><code>{example.code}</code></pre>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Response Format */}
+        <div className="mb-8">
+          <h2 className="text-lg font-bold mb-4">Response Format</h2>
+          <div className="rounded-xl bg-zinc-800 border border-zinc-700 overflow-hidden">
+            <div className="px-4 py-2 bg-zinc-700 text-sm font-medium text-zinc-300">JSON Response</div>
+            <pre className="p-4 text-xs text-zinc-300 overflow-x-auto"><code>{`{
+  "response": "Hello! I'm Yubi, the AI assistant by Devopods...",
+  "model": "gpt-oss-120b",
+  "usage": {
+    "prompt_tokens": 25,
+    "completion_tokens": 42,
+    "total_tokens": 67
+  }
+}`}</code></pre>
           </div>
         </div>
       </div>

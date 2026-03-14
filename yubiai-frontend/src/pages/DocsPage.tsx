@@ -125,6 +125,33 @@ export default function DocsPage() {
           <section id="api-reference" className="mb-16">
             <h2 className="text-2xl font-bold mb-4">API Reference</h2>
 
+            {/* Models Endpoint */}
+            <div className="p-6 rounded-xl bg-zinc-800 border border-zinc-700 mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="px-2 py-0.5 rounded bg-blue-600 text-xs font-bold">GET</span>
+                <code className="text-sm text-zinc-300">/api/v1/models</code>
+              </div>
+              <p className="text-sm text-zinc-400 mb-3">List all available AI models.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+                {[
+                  { id: 'gpt-oss-120b', name: 'GPT-OSS 120B', desc: 'Most capable reasoning model', badge: 'Default' },
+                  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', desc: 'Fast & versatile', badge: '' },
+                  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B', desc: 'Ultra-fast lightweight', badge: 'Fast' },
+                  { id: 'llama3-8b-8192', name: 'Llama 3 8B', desc: '8K context window', badge: '' },
+                ].map((m) => (
+                  <div key={m.id} className="p-2 rounded-lg bg-zinc-700/50 border border-zinc-600">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="font-medium text-xs text-zinc-200">{m.name}</span>
+                      {m.badge && <span className="px-1 py-0.5 text-[9px] font-bold rounded bg-emerald-600 text-white">{m.badge}</span>}
+                    </div>
+                    <p className="text-[10px] text-zinc-500">{m.desc}</p>
+                    <code className="text-[10px] text-zinc-600">{m.id}</code>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Chat Endpoint */}
             <div className="p-6 rounded-xl bg-zinc-800 border border-zinc-700 mb-6">
               <div className="flex items-center gap-2 mb-3">
                 <span className="px-2 py-0.5 rounded bg-emerald-600 text-xs font-bold">POST</span>
@@ -144,18 +171,29 @@ export default function DocsPage() {
                     </tr>
                   </thead>
                   <tbody className="text-zinc-300">
-                    <tr className="border-b border-zinc-700/50">
-                      <td className="py-2 font-mono text-emerald-300">message</td>
-                      <td className="py-2">string</td>
-                      <td className="py-2">Yes</td>
-                      <td className="py-2">The user message to send</td>
-                    </tr>
-                    <tr>
-                      <td className="py-2 font-mono text-emerald-300">conversation_history</td>
-                      <td className="py-2">array</td>
-                      <td className="py-2">No</td>
-                      <td className="py-2">Previous messages for context</td>
-                    </tr>
+                    {[
+                      ['message', 'string', 'Yes', 'The user message to send'],
+                      ['model', 'string', 'No', 'AI model ID (default: "gpt-oss-120b")'],
+                      ['system_prompt', 'string', 'No', 'Custom system prompt (overrides default Yubi persona)'],
+                      ['conversation_history', 'array', 'No', 'Previous messages [{role, content}] for context'],
+                      ['temperature', 'float', 'No', 'Randomness: 0.0 (deterministic) to 2.0 (creative). Default: 0.7'],
+                      ['top_p', 'float', 'No', 'Nucleus sampling threshold. Default: 0.9'],
+                      ['top_k', 'int', 'No', 'Top-k sampling. Default: 50'],
+                      ['frequency_penalty', 'float', 'No', 'Penalize repeated tokens (-2.0 to 2.0). Default: 0.0'],
+                      ['presence_penalty', 'float', 'No', 'Penalize already-present tokens (-2.0 to 2.0). Default: 0.0'],
+                      ['repetition_penalty', 'float', 'No', 'Repetition penalty (1.0 = none). Default: 1.0'],
+                      ['max_tokens', 'int', 'No', 'Max tokens to generate (up to 32768). Default: 2048'],
+                      ['min_tokens', 'int', 'No', 'Minimum tokens to generate. Default: 1'],
+                      ['stop', 'array', 'No', 'Stop sequences, e.g. ["\\nUser:"]'],
+                      ['seed', 'int', 'No', 'Random seed for reproducible outputs'],
+                    ].map(([param, type, req, desc]) => (
+                      <tr key={param} className="border-b border-zinc-700/50">
+                        <td className="py-2 font-mono text-emerald-300 text-xs">{param}</td>
+                        <td className="py-2 text-xs">{type}</td>
+                        <td className="py-2 text-xs">{req}</td>
+                        <td className="py-2 text-xs">{desc}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -163,6 +201,7 @@ export default function DocsPage() {
               <h4 className="text-sm font-medium text-zinc-300 mt-4 mb-2">Response</h4>
               <CodeBlock language="json" code={`{
   "response": "Hello! I'm Yubi, the AI assistant by Devopods...",
+  "model": "gpt-oss-120b",
   "usage": {
     "prompt_tokens": 25,
     "completion_tokens": 42,
@@ -183,7 +222,7 @@ export default function DocsPage() {
             <h3 className="text-lg font-semibold mb-2 mt-6">Basic Usage</h3>
             <CodeBlock language="python" code={`import requests
 
-# YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+# YubiAI API
 API_URL = "${API_BASE_URL}"
 API_KEY = "yubi-your-api-key-here"  # Get yours at ${APP_URL}/api-keys
 
@@ -192,20 +231,28 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# Simple chat
+# Simple chat with model selection and parameters
 response = requests.post(
     f"{API_URL}/api/v1/chat",
     headers=headers,
-    json={"message": "What is machine learning?"}
+    json={
+        "message": "What is machine learning?",
+        "model": "gpt-oss-120b",       # Default model
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "max_tokens": 2048
+    }
 )
 
 data = response.json()
-print(data["response"])`} />
+print(f"Model: {data['model']}")
+print(f"Response: {data['response']}")
+print(f"Tokens used: {data['usage']['total_tokens']}")`} />
 
             <h3 className="text-lg font-semibold mb-2 mt-6">With Conversation History</h3>
             <CodeBlock language="python" code={`import requests
 
-# YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+# YubiAI API
 API_URL = "${API_BASE_URL}"
 API_KEY = "yubi-your-api-key-here"  # Get yours at ${APP_URL}/api-keys
 headers = {
@@ -249,7 +296,7 @@ print(chat("What services do you offer?"))`} />
             <h3 className="text-lg font-semibold mb-2 mt-6">Basic Usage</h3>
             <CodeBlock language="javascript" code={`const axios = require('axios');
 
-// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+// YubiAI API
 const API_URL = '${API_BASE_URL}';
 const API_KEY = 'yubi-your-api-key-here'; // Get yours at ${APP_URL}/api-keys
 
@@ -283,7 +330,7 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+// YubiAI API
 const API_URL = '${API_BASE_URL}';
 const API_KEY = 'yubi-your-api-key-here'; // Get yours at ${APP_URL}/api-keys
 
@@ -314,7 +361,7 @@ app.listen(3000, () => console.log('Server running on port 3000'));`} />
             </div>
 
             <h3 className="text-lg font-semibold mb-2">Fetch API</h3>
-            <CodeBlock language="javascript" code={`// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+            <CodeBlock language="javascript" code={`// YubiAI API
 // Use this through a backend proxy to protect your API key
 
 async function askYubi(message) {
@@ -343,7 +390,7 @@ askYubi('Explain React hooks')
             <h3 className="text-lg font-semibold mb-2 mt-6">React Integration</h3>
             <CodeBlock language="jsx" code={`import { useState } from 'react';
 
-// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+// YubiAI API
 const API_URL = '${API_BASE_URL}';
 const API_KEY = 'yubi-your-api-key-here'; // Get at ${APP_URL}/api-keys
 
@@ -394,7 +441,7 @@ function YubiChat() {
             <h3 className="text-lg font-semibold mb-2 mt-6">Type Definitions & Usage</h3>
             <CodeBlock language="typescript" code={`import axios from 'axios';
 
-// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+// YubiAI API
 const API_URL = '${API_BASE_URL}';
 const API_KEY = 'yubi-your-api-key-here'; // Get yours at ${APP_URL}/api-keys
 
@@ -455,7 +502,7 @@ import (
     "net/http"
 )
 
-// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+// YubiAI API
 const apiURL = "${API_BASE_URL}/api/v1/chat"
 const apiKey = "yubi-your-api-key-here" // Get yours at ${APP_URL}/api-keys
 
@@ -512,7 +559,7 @@ func main() {
             <CodeBlock language="ruby" code={`require 'httparty'
 require 'json'
 
-# YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+# YubiAI API
 API_URL = '${API_BASE_URL}'
 API_KEY = 'yubi-your-api-key-here' # Get yours at ${APP_URL}/api-keys
 
@@ -540,7 +587,7 @@ puts ask_yubi('How do I create a REST API in Rails?')`} />
 
             <h3 className="text-lg font-semibold mb-2">Using cURL</h3>
             <CodeBlock language="php" code={`<?php
-// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+// YubiAI API
 $apiUrl = '${API_BASE_URL}/api/v1/chat';
 $apiKey = 'yubi-your-api-key-here'; // Get yours at ${APP_URL}/api-keys
 
@@ -576,7 +623,7 @@ require 'vendor/autoload.php';
 
 use GuzzleHttp\\Client;
 
-// YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+// YubiAI API
 $client = new Client([
     'base_uri' => '${API_BASE_URL}',
     'headers' => [
@@ -600,7 +647,7 @@ echo $data['response'];
             <p className="text-zinc-400 mb-4">Use the YubiAI API directly from the command line with cURL. Get your API key at <a href={`${APP_URL}/api-keys`} className="text-emerald-400 hover:underline" target="_blank" rel="noreferrer">{APP_URL}/api-keys</a>.</p>
 
             <h3 className="text-lg font-semibold mb-2">Basic Request</h3>
-            <CodeBlock language="bash" code={`# YubiAI API - https://yubiai-chatbot-ss3lx2pw.devinapps.com
+            <CodeBlock language="bash" code={`# YubiAI API
 # Get your API key at ${APP_URL}/api-keys
 
 curl -X POST ${API_BASE_URL}/api/v1/chat \\

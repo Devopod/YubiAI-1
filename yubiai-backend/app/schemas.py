@@ -132,9 +132,23 @@ class APIKeyListResponse(BaseModel):
 # API Chat (external API usage)
 class APIChatRequest(BaseModel):
     message: str
+    system_prompt: Optional[str] = None
     conversation_history: Optional[List[dict]] = None
+    model: Optional[str] = None  # e.g. "gpt-oss-120b", "llama-3.3-70b-versatile"
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 0.9
+    top_k: Optional[int] = 50
+    frequency_penalty: Optional[float] = 0.0
+    presence_penalty: Optional[float] = 0.0
+    repetition_penalty: Optional[float] = 1.0
+    max_tokens: Optional[int] = 2048
+    min_tokens: Optional[int] = 1
+    stop: Optional[List[str]] = None
+    seed: Optional[int] = None
+    stream: Optional[bool] = False
 
 
 class APIChatResponse(BaseModel):
     response: str
+    model: str
     usage: dict
