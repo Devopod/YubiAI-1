@@ -27,7 +27,7 @@ GROQ_API_KEYS = [
 ]
 
 _SUGGESTIONS_FILE = Path(__file__).resolve().parent.parent.parent / ".suggestions.json"
-_ROTATION_HOURS = 6
+_ROTATION_MINUTES = 30
 
 # Default prompts used until the first LLM generation completes
 _DEFAULT_PROMPTS: List[str] = [
@@ -133,7 +133,7 @@ async def _maybe_refresh() -> List[str]:
     now = datetime.now(timezone.utc)
 
     # Check if refresh is needed
-    if _last_generated and (now - _last_generated) < timedelta(hours=_ROTATION_HOURS):
+    if _last_generated and (now - _last_generated) < timedelta(minutes=_ROTATION_MINUTES):
         return _cached_prompts
 
     # Try to acquire lock (non-blocking for concurrent requests)
@@ -142,7 +142,7 @@ async def _maybe_refresh() -> List[str]:
 
     async with _generation_lock:
         # Double-check after acquiring lock
-        if _last_generated and (now - _last_generated) < timedelta(hours=_ROTATION_HOURS):
+        if _last_generated and (now - _last_generated) < timedelta(minutes=_ROTATION_MINUTES):
             return _cached_prompts
 
         logger.info("Generating new suggestion prompts via LLM...")
