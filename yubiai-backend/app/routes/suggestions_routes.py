@@ -27,7 +27,7 @@ GROQ_API_KEYS = [
 ]
 
 _SUGGESTIONS_FILE = Path(__file__).resolve().parent.parent.parent / ".suggestions.json"
-_ROTATION_HOURS = 12
+_ROTATION_HOURS = 6
 
 # Default prompts used until the first LLM generation completes
 _DEFAULT_PROMPTS: List[str] = [
