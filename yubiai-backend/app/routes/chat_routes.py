@@ -467,21 +467,37 @@ async def delete_chat(
 
 
 async def _get_location_from_ip(ip: str) -> dict:
-    """Get location details (country, city, lat, lon) from IP address using free geolocation API."""
+    """Get location details (country, city, region, lat, lon) from IP address using free geolocation API."""
     if not ip or ip in ("127.0.0.1", "::1", "localhost"):
         return {}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,city,lat,lon,timezone")
+            # Use extended fields for exact location: city, region (state/division), district, zip
+            resp = await client.get(
+                f"http://ip-api.com/json/{ip}",
+                params={"fields": "status,country,countryCode,regionName,city,district,zip,lat,lon,timezone,isp"}
+            )
             if resp.status_code == 200:
                 data_resp = resp.json()
                 if data_resp.get("status") == "success":
+                    city = data_resp.get("city", "")
+                    district = data_resp.get("district", "")
+                    region = data_resp.get("regionName", "")
+                    # Build the most specific location string
+                    location_parts = [p for p in [district, city, region] if p and p != city]
+                    exact_location = city
+                    if district and district != city:
+                        exact_location = f"{district}, {city}"
                     return {
                         "country": data_resp.get("country", ""),
-                        "city": data_resp.get("city", ""),
+                        "city": city,
+                        "district": district,
+                        "region": region,
+                        "exact_location": exact_location,
                         "lat": data_resp.get("lat"),
                         "lon": data_resp.get("lon"),
                         "timezone": data_resp.get("timezone", ""),
+                        "zip": data_resp.get("zip", ""),
                     }
     except Exception as e:
         logger.warning(f"IP geolocation failed for {ip}: {e}")
@@ -703,28 +719,40 @@ async def send_message(
     )
 
     # Detect user's location from IP for location-aware responses and weather
-    client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
+    # Priority: CF-Connecting-IP (Cloudflare) > X-Real-IP (nginx) > X-Forwarded-For > direct IP
+    client_ip = (
+        request.headers.get("cf-connecting-ip", "").strip()
+        or request.headers.get("x-real-ip", "").strip()
+        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or request.client.host
+    )
     user_location = await _get_location_from_ip(client_ip)
     user_country = user_location.get("country", "")
     user_city = user_location.get("city", "")
+    user_region = user_location.get("region", "")
+    user_exact = user_location.get("exact_location", user_city)
     user_lat = user_location.get("lat")
     user_lon = user_location.get("lon")
     location_context = ""
     if user_country:
+        full_location = ", ".join(p for p in [user_exact, user_region, user_country] if p)
         location_context = (
             f"\n\n### User Location\n"
-            f"The user is located in **{user_city}, {user_country}**. "
+            f"The user is located in **{full_location}**. "
+            f"Their exact city is **{user_city}**, region/state: **{user_region}**, country: **{user_country}**. "
+            f"Coordinates: {user_lat}, {user_lon}. "
             f"When they ask location-sensitive questions like 'Who is the Prime Minister?', 'Who is the President?', "
             f"'What is the capital?', 'What is the weather?' without specifying a country, "
             f"assume they are asking about {user_country} and answer accordingly. "
             f"For example, if user is in Bangladesh and asks 'Who is PM?', answer about Bangladesh's PM. "
-            f"If user is in India and asks 'Who is PM?', answer about India's PM."
+            f"If user is in India and asks 'Who is PM?', answer about India's PM. "
+            f"When mentioning the user's location in weather or other responses, always say the exact city name: {user_city}."
         )
 
     # Fetch live weather data if user asks about weather/rain/temperature
     weather_context = ""
     if _is_weather_query(data.content) and user_lat is not None and user_lon is not None:
-        weather_data = await _get_weather_data(user_lat, user_lon, user_city or "Unknown", user_country or "Unknown")
+        weather_data = await _get_weather_data(user_lat, user_lon, user_exact or user_city or "Unknown", user_country or "Unknown")
         if weather_data:
             weather_context = f"\n\n{weather_data}"
 

@@ -4,9 +4,8 @@ import { voiceAPI } from '../services/api';
 import { audioManager } from '../services/audioManager';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
+import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import type { Message } from '../types';
 
@@ -54,12 +53,26 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
   const showContinue = !isUser && message.content.includes('[CONTINUE_AVAILABLE]');
   const rawContent = message.content.replace(/\[CONTINUE_AVAILABLE\]/g, '').trimEnd();
   
-  // Pre-process content: fix tables + auto-linkify URLs
-  const displayContent = useMemo(() => {
-    // Step 1: Consolidate table rows — merge all consecutive pipe-delimited lines
-    // into a single block with no extra blank lines between them.
+  // Render KaTeX to HTML string
+  const renderKatex = (latex: string, displayMode: boolean): string => {
+    try {
+      return katex.renderToString(latex, {
+        displayMode,
+        throwOnError: false,
+        strict: false,
+        trust: true,
+        macros: {} as Record<string, string>,
+      });
+    } catch {
+      return displayMode ? `<pre>${latex}</pre>` : `<code>${latex}</code>`;
+    }
+  };
+
+  // Pre-process content into segments: markdown text + display math blocks
+  const contentSegments = useMemo(() => {
+    // Step 1: Consolidate table rows
     const lines = rawContent.split('\n');
-    const result: string[] = [];
+    const tableResult: string[] = [];
     const isTableRow = (l: string) => {
       const trimmed = l.trim();
       return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 1;
@@ -73,104 +86,155 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
 
       if (isTableRow(line) || isSeparator(line)) {
         if (!inTable) {
-          // Starting a new table — ensure blank line before it
-          if (result.length > 0 && result[result.length - 1].trim() !== '') {
-            result.push('');
+          if (tableResult.length > 0 && tableResult[tableResult.length - 1].trim() !== '') {
+            tableResult.push('');
           }
           inTable = true;
         }
-        result.push(line);
+        tableResult.push(line);
       } else if (inTable && trimmed === '') {
-        // Blank line inside what might be a continued table — peek ahead
         let nextNonEmpty = i + 1;
         while (nextNonEmpty < lines.length && lines[nextNonEmpty].trim() === '') {
           nextNonEmpty++;
         }
         if (nextNonEmpty < lines.length && (isTableRow(lines[nextNonEmpty]) || isSeparator(lines[nextNonEmpty]))) {
-          // Skip blank lines between table rows — keep them together
           continue;
         } else {
-          // Table ended — add blank line after
           inTable = false;
-          result.push('');
-          result.push(line);
+          tableResult.push('');
+          tableResult.push(line);
         }
       } else {
         if (inTable) {
-          // Table just ended — ensure blank line after
           inTable = false;
-          result.push('');
+          tableResult.push('');
         }
-        result.push(line);
+        tableResult.push(line);
       }
     }
 
-    let processed = result.join('\n');
+    let processed = tableResult.join('\n');
 
-    // Step 2: Fix LaTeX environments (\begin{...}...\end{...})
-    // The AI sometimes scatters $$ inside environments like \begin{aligned}...\end{aligned}
-    // We need to: strip internal $$, wrap the whole environment in $$...$$
+    // Step 2: Extract code blocks first to protect them
+    const codeBlocks: string[] = [];
+    processed = processed.replace(/```[\s\S]*?```/g, (m) => {
+      codeBlocks.push(m);
+      return `%%CODE_BLOCK_${codeBlocks.length - 1}%%`;
+    });
+
+    // Step 3: Fix LaTeX environments (\begin{...}...\end{...})
     processed = processed.replace(
       /(\$\$\s*)?\\begin\{(aligned|align|equation|gather|multline|cases|pmatrix|bmatrix|vmatrix|matrix|array|split)\}([\s\S]*?)\\end\{\2\}(\s*\$\$)?/g,
-      (_m, _leadingDollar, envName, inner, _trailingDollar) => {
-        // Strip any $$ found inside the environment content
+      (_m, _lead, envName, inner, _trail) => {
         const cleaned = inner.replace(/\$\$/g, '');
         return `$$\n\\begin{${envName}}${cleaned}\\end{${envName}}\n$$`;
       }
     );
 
-    // Step 2b: Convert LaTeX math notation to $$ / $ for remark-math
-    // Handle \[ ... \] -> $$ ... $$ (display math)
+    // Step 3b: Convert \[...\] to $$...$$ and \(...\) to $...$
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$${inner}$$`);
-    // Handle \( ... \) -> $ ... $ (inline math)
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
-    // Handle standalone [ ... ] with LaTeX content (display math without backslash)
-    processed = processed.replace(/^\[\s*([\s\S]*?)\s*\]$/gm, (_m, inner) => {
-      if (/\\(?:frac|int|sum|sqrt|prod|lim|infty|partial|nabla|cdot|text|displaystyle|begin|end|left|right|bigl|bigr|zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln)/.test(inner)) {
-        return `$$${inner}$$`;
-      }
-      return _m;
-    });
-    // Handle inline (\zeta) or (\alpha) etc.
-    processed = processed.replace(/\(\\((?:zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|epsilon|lambda|mu|sigma|pi|rho|tau|eta|xi|kappa|nu|chi|iota|upsilon)(?:[^)]*))\)/g, (_m, inner) => `$\\${inner}$`);
 
-    // Step 2c: Catch raw LaTeX lines that aren't wrapped in any delimiters
-    // If a line starts with a LaTeX command and contains typical math patterns, wrap in $$
-    const latexCommandPattern = /\\(?:frac|int|sum|sqrt|prod|lim|infty|partial|nabla|cdot|text|displaystyle|begin|end|left|right|bigl|bigr|zeta|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln|vec|hat|bar|dot|ddot|tilde|mathbb|mathcal|mathbf|mathrm|operatorname|binom)/;
+    // Step 3c: Catch raw LaTeX lines (2+ commands, not already wrapped)
+    // IMPORTANT: Track $$...$$ blocks so we don't wrap lines inside them
+    const latexCmdPat = /\\(?:frac|int|sum|sqrt|prod|lim|infty|partial|nabla|cdot|text|displaystyle|begin|end|left|right|bigl|bigr|vec|hat|bar|mathbb|mathcal|mathbf|mathrm|operatorname|binom)/;
+    let insideDisplayMath = false;
     processed = processed.split('\n').map(line => {
-      const trimmed = line.trim();
-      // Skip lines already in math delimiters, code blocks, or empty
-      if (!trimmed || trimmed.startsWith('$') || trimmed.startsWith('```') || trimmed.startsWith('|')) return line;
-      // Skip lines that are clearly not math (start with letters/words forming sentences)
-      if (/^[A-Za-z]{4,}\s/.test(trimmed) && !latexCommandPattern.test(trimmed)) return line;
-      // If the line is predominantly LaTeX (starts with \ command or has multiple LaTeX commands)
-      if (latexCommandPattern.test(trimmed)) {
-        const commandCount = (trimmed.match(/\\(?:frac|int|sum|sqrt|prod|lim|partial|nabla|cdot|left|right|begin|end|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln|vec|hat|bar|infty|pm|mp|times|div|neq|leq|geq|approx|equiv|subset|supset|cup|cap|forall|exists|in|notin|mathbb|mathcal|displaystyle|binom|operatorname)/g) || []).length;
-        // If the line has 2+ LaTeX commands and isn't already wrapped, wrap as display math
-        if (commandCount >= 2 && !trimmed.startsWith('$') && !trimmed.endsWith('$')) {
-          // Check it's not inside a sentence (no long English words before the LaTeX)
-          const beforeLatex = trimmed.split('\\')[0];
-          if (beforeLatex.length < 10 || !/[a-zA-Z]{5,}/.test(beforeLatex)) {
-            return `$$${trimmed}$$`;
+      const t = line.trim();
+      // Track $$ delimiters to know if we're inside a display math block
+      // Handle lines that are just "$$" or start/end with "$$"
+      if (t === '$$') {
+        insideDisplayMath = !insideDisplayMath;
+        return line;
+      }
+      // Also detect inline $$...$$ on a single line (already wrapped, skip it)
+      if (t.startsWith('$$') && t.endsWith('$$') && t.length > 4) return line;
+      // Skip lines inside $$...$$ blocks (they're already part of display math)
+      if (insideDisplayMath) return line;
+      if (!t || t.startsWith('$') || t.startsWith('%%CODE') || t.startsWith('|')) return line;
+      if (/^[A-Za-z]{4,}\s/.test(t) && !latexCmdPat.test(t)) return line;
+      if (latexCmdPat.test(t)) {
+        const cnt = (t.match(/\\(?:frac|int|sum|sqrt|prod|lim|partial|nabla|cdot|left|right|begin|end|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln|vec|hat|bar|infty|pm|mp|times|div)/g) || []).length;
+        if (cnt >= 2 && !t.startsWith('$') && !t.endsWith('$')) {
+          const before = t.split('\\')[0];
+          if (before.length < 10 || !/[a-zA-Z]{5,}/.test(before)) {
+            return `$$${t}$$`;
           }
         }
       }
       return line;
     }).join('\n');
 
-    // Step 2d: Clean up double-wrapped $$$$ (from multiple preprocessing steps)
+    // Step 3d: Clean up $$$$
     processed = processed.replace(/\$\$\$\$/g, '$$');
 
-    // Step 3: Auto-linkify plain URLs
-    processed = processed.replace(
-      /(?<!\]\()(?<!")(?<!\()(?:^|\s)(https?:\/\/[^\s<>)"'\]]+)/gm,
-      (match, url) => {
-        const leading = match.startsWith(' ') || match.startsWith('\n') ? match[0] : '';
-        const cleanUrl = url.trim();
-        return `${leading}[${cleanUrl}](${cleanUrl})`;
+    // Step 4: Split content into segments by display math $$...$$
+    // Display math is rendered outside ReactMarkdown for reliability
+    const segments: Array<{ type: 'markdown' | 'display-math'; content: string }> = [];
+    const displayMathRegex = /\$\$([\s\S]*?)\$\$/g;
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = displayMathRegex.exec(processed)) !== null) {
+      // Add text before this math block
+      if (match.index > lastIdx) {
+        segments.push({ type: 'markdown', content: processed.slice(lastIdx, match.index) });
       }
-    );
-    return processed;
+      segments.push({ type: 'display-math', content: match[1].trim() });
+      lastIdx = match.index + match[0].length;
+    }
+    // Add remaining text
+    if (lastIdx < processed.length) {
+      segments.push({ type: 'markdown', content: processed.slice(lastIdx) });
+    }
+    if (segments.length === 0) {
+      segments.push({ type: 'markdown', content: processed });
+    }
+
+    // Step 5: For markdown segments, pre-render inline math $...$ into KaTeX HTML
+    // and restore code blocks
+    const inlineMathRegex = /(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g;
+
+    const finalSegments = segments.map(seg => {
+      if (seg.type === 'display-math') return seg;
+
+      let md = seg.content;
+
+      // Restore code blocks
+      md = md.replace(/%%CODE_BLOCK_(\d+)%%/g, (_m, idx) => codeBlocks[parseInt(idx)] || '');
+
+      // Pre-render inline math into KaTeX HTML spans
+      // We protect inline code first
+      const inlineCodeParts: string[] = [];
+      md = md.replace(/`[^`]+`/g, (m) => {
+        inlineCodeParts.push(m);
+        return `%%INLINE_CODE_${inlineCodeParts.length - 1}%%`;
+      });
+
+      md = md.replace(inlineMathRegex, (_m, math) => {
+        const trimmed = math.trim();
+        // Skip if it looks like a price (e.g. $5, $10.00)
+        if (/^\d/.test(trimmed)) return _m;
+        return renderKatex(trimmed, false);
+      });
+
+      // Restore inline code
+      md = md.replace(/%%INLINE_CODE_(\d+)%%/g, (_m, idx) => inlineCodeParts[parseInt(idx)] || '');
+
+      // Auto-linkify plain URLs
+      md = md.replace(
+        /(?<!\]\()(?<!")(?<!\()(?:^|\s)(https?:\/\/[^\s<>)"'\]]+)/gm,
+        (match, url) => {
+          const leading = match.startsWith(' ') || match.startsWith('\n') ? match[0] : '';
+          const cleanUrl = url.trim();
+          return `${leading}[${cleanUrl}](${cleanUrl})`;
+        }
+      );
+
+      return { ...seg, content: md };
+    });
+
+    return finalSegments;
   }, [rawContent]);
 
   const handleCopy = () => {
@@ -246,225 +310,240 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
             {isUser ? (userName || 'You') : 'YubiAI'}
           </p>
           <div className="text-zinc-200 prose prose-invert prose-sm max-w-none">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeRaw, rehypeKatex]}
-              components={{
-                /* ─── HEADINGS ─── */
-                h1: ({ children, ...props }) => (
-                  <h1 className="text-2xl font-bold text-white mt-6 mb-3 pb-2 border-b border-zinc-700" {...props}>{children}</h1>
-                ),
-                h2: ({ children, ...props }) => (
-                  <h2 className="text-xl font-bold text-white mt-5 mb-2 pb-1.5 border-b border-zinc-700/50" {...props}>{children}</h2>
-                ),
-                h3: ({ children, ...props }) => (
-                  <h3 className="text-lg font-semibold text-white mt-4 mb-2" {...props}>{children}</h3>
-                ),
-                h4: ({ children, ...props }) => (
-                  <h4 className="text-base font-semibold text-zinc-200 mt-3 mb-1.5" {...props}>{children}</h4>
-                ),
-                h5: ({ children, ...props }) => (
-                  <h5 className="text-sm font-semibold text-zinc-300 mt-3 mb-1" {...props}>{children}</h5>
-                ),
-                h6: ({ children, ...props }) => (
-                  <h6 className="text-xs font-semibold text-zinc-400 mt-2 mb-1 uppercase tracking-wide" {...props}>{children}</h6>
-                ),
+            {contentSegments.map((seg, segIdx) => {
+              if (seg.type === 'display-math') {
+                return (
+                  <div
+                    key={segIdx}
+                    className="katex-display-block my-4 overflow-x-auto"
+                    dangerouslySetInnerHTML={{ __html: renderKatex(seg.content, true) }}
+                  />
+                );
+              }
+              return (
+                <ReactMarkdown
+                  key={segIdx}
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw]}
+                  components={{
+                    /* ─── HEADINGS ─── */
+                    h1: ({ children, ...props }) => (
+                      <h1 className="text-2xl font-bold text-white mt-6 mb-3 pb-2 border-b border-zinc-700" {...props}>{children}</h1>
+                    ),
+                    h2: ({ children, ...props }) => (
+                      <h2 className="text-xl font-bold text-white mt-5 mb-2 pb-1.5 border-b border-zinc-700/50" {...props}>{children}</h2>
+                    ),
+                    h3: ({ children, ...props }) => (
+                      <h3 className="text-lg font-semibold text-white mt-4 mb-2" {...props}>{children}</h3>
+                    ),
+                    h4: ({ children, ...props }) => (
+                      <h4 className="text-base font-semibold text-zinc-200 mt-3 mb-1.5" {...props}>{children}</h4>
+                    ),
+                    h5: ({ children, ...props }) => (
+                      <h5 className="text-sm font-semibold text-zinc-300 mt-3 mb-1" {...props}>{children}</h5>
+                    ),
+                    h6: ({ children, ...props }) => (
+                      <h6 className="text-xs font-semibold text-zinc-400 mt-2 mb-1 uppercase tracking-wide" {...props}>{children}</h6>
+                    ),
 
-                /* ─── PARAGRAPHS ─── */
-                p: ({ children, ...props }) => (
-                  <p className="my-2 leading-relaxed text-zinc-200" {...props}>{children}</p>
-                ),
+                    /* ─── PARAGRAPHS ─── */
+                    p: ({ children, ...props }) => (
+                      <p className="my-2 leading-relaxed text-zinc-200" {...props}>{children}</p>
+                    ),
 
-                /* ─── BOLD / ITALIC / STRIKETHROUGH ─── */
-                strong: ({ children, ...props }) => (
-                  <strong className="font-bold text-white" {...props}>{children}</strong>
-                ),
-                em: ({ children, ...props }) => (
-                  <em className="italic text-zinc-300" {...props}>{children}</em>
-                ),
-                del: ({ children, ...props }) => (
-                  <del className="line-through text-zinc-500" {...props}>{children}</del>
-                ),
+                    /* ─── BOLD / ITALIC / STRIKETHROUGH ─── */
+                    strong: ({ children, ...props }) => (
+                      <strong className="font-bold text-white" {...props}>{children}</strong>
+                    ),
+                    em: ({ children, ...props }) => (
+                      <em className="italic text-zinc-300" {...props}>{children}</em>
+                    ),
+                    del: ({ children, ...props }) => (
+                      <del className="line-through text-zinc-500" {...props}>{children}</del>
+                    ),
 
-                /* ─── LINKS ─── */
-                a: ({ href, children, ...props }) => (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-emerald-400 hover:text-emerald-300 underline decoration-emerald-400/50 hover:decoration-emerald-300 transition-colors font-medium break-all"
-                    {...props}
-                  >
-                    {children}
-                  </a>
-                ),
-
-                /* ─── IMAGES ─── */
-                img: ({ src, alt, ...props }) => (
-                  <span className="block my-3">
-                    <img
-                      src={src}
-                      alt={alt || 'image'}
-                      className="max-w-full h-auto rounded-lg border border-zinc-700 shadow-lg"
-                      loading="lazy"
-                      {...props}
-                    />
-                    {alt && alt !== 'image' && (
-                      <span className="block text-xs text-zinc-500 mt-1 text-center italic">{alt}</span>
-                    )}
-                  </span>
-                ),
-
-                /* ─── BLOCKQUOTES ─── */
-                blockquote: ({ children, ...props }) => (
-                  <blockquote
-                    className="border-l-4 border-emerald-500 bg-zinc-800/60 pl-4 pr-3 py-2 my-3 rounded-r-lg text-zinc-300 italic"
-                    {...props}
-                  >
-                    {children}
-                  </blockquote>
-                ),
-
-                /* ─── LISTS ─── */
-                ul: ({ children, ...props }) => (
-                  <ul className="list-disc list-outside ml-6 my-2 space-y-1 text-zinc-200 marker:text-emerald-500" {...props}>{children}</ul>
-                ),
-                ol: ({ children, ...props }) => (
-                  <ol className="list-decimal list-outside ml-6 my-2 space-y-1 text-zinc-200 marker:text-emerald-500" {...props}>{children}</ol>
-                ),
-                li: ({ children, className, ...props }) => {
-                  const isTaskItem = className?.includes('task-list-item');
-                  return (
-                    <li className={`leading-relaxed ${isTaskItem ? 'list-none -ml-6 flex items-start gap-2' : ''}`} {...props}>
-                      {children}
-                    </li>
-                  );
-                },
-
-                /* ─── TASK LIST CHECKBOX ─── */
-                input: ({ type, checked, ...props }) => {
-                  if (type === 'checkbox') {
-                    return (
-                      <span
-                        className={`inline-flex items-center justify-center w-4 h-4 rounded border mt-1 flex-shrink-0 ${
-                          checked ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-zinc-600 bg-zinc-800'
-                        }`}
+                    /* ─── LINKS ─── */
+                    a: ({ href, children, ...props }) => (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-400 hover:text-emerald-300 underline decoration-emerald-400/50 hover:decoration-emerald-300 transition-colors font-medium break-all"
                         {...props}
                       >
-                        {checked && (
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
+                        {children}
+                      </a>
+                    ),
+
+                    /* ─── IMAGES ─── */
+                    img: ({ src, alt, ...props }) => (
+                      <span className="block my-3">
+                        <img
+                          src={src}
+                          alt={alt || 'image'}
+                          className="max-w-full h-auto rounded-lg border border-zinc-700 shadow-lg"
+                          loading="lazy"
+                          {...props}
+                        />
+                        {alt && alt !== 'image' && (
+                          <span className="block text-xs text-zinc-500 mt-1 text-center italic">{alt}</span>
                         )}
                       </span>
-                    );
-                  }
-                  return <input type={type} checked={checked} {...props} />;
-                },
+                    ),
 
-                /* ─── HORIZONTAL RULE ─── */
-                hr: ({ ...props }) => (
-                  <hr className="my-6 border-0 h-px bg-gradient-to-r from-transparent via-zinc-600 to-transparent" {...props} />
-                ),
+                    /* ─── BLOCKQUOTES ─── */
+                    blockquote: ({ children, ...props }) => (
+                      <blockquote
+                        className="border-l-4 border-emerald-500 bg-zinc-800/60 pl-4 pr-3 py-2 my-3 rounded-r-lg text-zinc-300 italic"
+                        {...props}
+                      >
+                        {children}
+                      </blockquote>
+                    ),
 
-                /* ─── TABLES ─── */
-                table: ({ children, ...props }) => (
-                  <div className="overflow-x-auto my-4 rounded-lg border border-zinc-600">
-                    <table className="min-w-full border-collapse text-sm" {...props}>
-                      {children}
-                    </table>
-                  </div>
-                ),
-                thead: ({ children, ...props }) => (
-                  <thead className="bg-zinc-700/80" {...props}>{children}</thead>
-                ),
-                tbody: ({ children, ...props }) => (
-                  <tbody className="divide-y divide-zinc-700" {...props}>{children}</tbody>
-                ),
-                th: ({ children, ...props }) => (
-                  <th className="border-b border-zinc-600 px-4 py-2.5 text-left text-xs font-bold text-emerald-400 uppercase tracking-wider" {...props}>
-                    {children}
-                  </th>
-                ),
-                td: ({ children, ...props }) => (
-                  <td className="px-4 py-2.5 text-zinc-300 border-b border-zinc-700/50" {...props}>
-                    {children}
-                  </td>
-                ),
-                tr: ({ children, ...props }) => (
-                  <tr className="hover:bg-zinc-700/40 transition-colors even:bg-zinc-800/30" {...props}>{children}</tr>
-                ),
-                /* ─── CODE (inline + block) ─── */
-                code: ({ className, children, ...props }) => {
-                  const match = /language-(\w+)/.exec(className || '');
-                  const isInline = !match;
-                  const codeString = String(children).replace(/\n$/, '');
-                  return isInline ? (
-                    <code className="bg-zinc-700 px-1.5 py-0.5 rounded text-sm text-emerald-300 font-mono" {...props}>
-                      {children}
-                    </code>
-                  ) : (
-                    <CodeBlock
-                      language={match[1]}
-                      code={codeString}
-                      onCopy={handleCodeCopy}
-                      isCopied={codeCopied === codeString}
-                    />
-                  );
-                },
+                    /* ─── LISTS ─── */
+                    ul: ({ children, ...props }) => (
+                      <ul className="list-disc list-outside ml-6 my-2 space-y-1 text-zinc-200 marker:text-emerald-500" {...props}>{children}</ul>
+                    ),
+                    ol: ({ children, ...props }) => (
+                      <ol className="list-decimal list-outside ml-6 my-2 space-y-1 text-zinc-200 marker:text-emerald-500" {...props}>{children}</ol>
+                    ),
+                    li: ({ children, className, ...props }) => {
+                      const isTaskItem = className?.includes('task-list-item');
+                      return (
+                        <li className={`leading-relaxed ${isTaskItem ? 'list-none -ml-6 flex items-start gap-2' : ''}`} {...props}>
+                          {children}
+                        </li>
+                      );
+                    },
 
-                /* ─── PRE (wraps code blocks) ─── */
-                pre: ({ children }) => (
-                  <div>{children}</div>
-                ),
+                    /* ─── TASK LIST CHECKBOX ─── */
+                    input: ({ type, checked, ...props }) => {
+                      if (type === 'checkbox') {
+                        return (
+                          <span
+                            className={`inline-flex items-center justify-center w-4 h-4 rounded border mt-1 flex-shrink-0 ${
+                              checked ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-zinc-600 bg-zinc-800'
+                            }`}
+                            {...props}
+                          >
+                            {checked && (
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </span>
+                        );
+                      }
+                      return <input type={type} checked={checked} {...props} />;
+                    },
 
-                /* ─── DETAILS / SUMMARY (collapsible) ─── */
-                details: ({ children, ...props }) => (
-                  <details className="my-3 bg-zinc-800/50 border border-zinc-700 rounded-lg overflow-hidden" {...props}>
-                    {children}
-                  </details>
-                ),
-                summary: ({ children, ...props }) => (
-                  <summary className="px-4 py-2 cursor-pointer font-semibold text-zinc-200 hover:bg-zinc-700/50 transition-colors select-none" {...props}>
-                    {children}
-                  </summary>
-                ),
+                    /* ─── HORIZONTAL RULE ─── */
+                    hr: ({ ...props }) => (
+                      <hr className="my-6 border-0 h-px bg-gradient-to-r from-transparent via-zinc-600 to-transparent" {...props} />
+                    ),
 
-                /* ─── SUBSCRIPT / SUPERSCRIPT ─── */
-                sub: ({ children, ...props }) => (
-                  <sub className="text-xs text-zinc-400" {...props}>{children}</sub>
-                ),
-                sup: ({ children, ...props }) => (
-                  <sup className="text-xs text-emerald-400 ml-0.5" {...props}>{children}</sup>
-                ),
+                    /* ─── TABLES ─── */
+                    table: ({ children, ...props }) => (
+                      <div className="overflow-x-auto my-4 rounded-lg border border-zinc-600">
+                        <table className="min-w-full border-collapse text-sm" {...props}>
+                          {children}
+                        </table>
+                      </div>
+                    ),
+                    thead: ({ children, ...props }) => (
+                      <thead className="bg-zinc-700/80" {...props}>{children}</thead>
+                    ),
+                    tbody: ({ children, ...props }) => (
+                      <tbody className="divide-y divide-zinc-700" {...props}>{children}</tbody>
+                    ),
+                    th: ({ children, ...props }) => (
+                      <th className="border-b border-zinc-600 px-4 py-2.5 text-left text-xs font-bold text-emerald-400 uppercase tracking-wider" {...props}>
+                        {children}
+                      </th>
+                    ),
+                    td: ({ children, ...props }) => (
+                      <td className="px-4 py-2.5 text-zinc-300 border-b border-zinc-700/50" {...props}>
+                        {children}
+                      </td>
+                    ),
+                    tr: ({ children, ...props }) => (
+                      <tr className="hover:bg-zinc-700/40 transition-colors even:bg-zinc-800/30" {...props}>{children}</tr>
+                    ),
 
-                /* ─── KEYBOARD INPUT ─── */
-                kbd: ({ children, ...props }) => (
-                  <kbd className="inline-block px-2 py-0.5 text-xs font-mono font-semibold text-zinc-300 bg-zinc-700 border border-zinc-600 rounded shadow-sm" {...props}>
-                    {children}
-                  </kbd>
-                ),
+                    /* ─── CODE (inline + block) ─── */
+                    code: ({ className, children, ...props }) => {
+                      const match = /language-(\w+)/.exec(className || '');
+                      const isInline = !match;
+                      const codeString = String(children).replace(/\n$/, '');
+                      return isInline ? (
+                        <code className="bg-zinc-700 px-1.5 py-0.5 rounded text-sm text-emerald-300 font-mono" {...props}>
+                          {children}
+                        </code>
+                      ) : (
+                        <CodeBlock
+                          language={match[1]}
+                          code={codeString}
+                          onCopy={handleCodeCopy}
+                          isCopied={codeCopied === codeString}
+                        />
+                      );
+                    },
 
-                /* ─── MARK (highlight) ─── */
-                mark: ({ children, ...props }) => (
-                  <mark className="bg-yellow-500/30 text-yellow-200 px-1 rounded" {...props}>{children}</mark>
-                ),
+                    /* ─── PRE (wraps code blocks) ─── */
+                    pre: ({ children }) => (
+                      <div>{children}</div>
+                    ),
 
-                /* ─── ABBREVIATION ─── */
-                abbr: ({ children, title, ...props }) => (
-                  <abbr className="underline decoration-dotted decoration-zinc-500 cursor-help text-zinc-200" title={title} {...props}>
-                    {children}
-                  </abbr>
-                ),
+                    /* ─── DETAILS / SUMMARY (collapsible) ─── */
+                    details: ({ children, ...props }) => (
+                      <details className="my-3 bg-zinc-800/50 border border-zinc-700 rounded-lg overflow-hidden" {...props}>
+                        {children}
+                      </details>
+                    ),
+                    summary: ({ children, ...props }) => (
+                      <summary className="px-4 py-2 cursor-pointer font-semibold text-zinc-200 hover:bg-zinc-700/50 transition-colors select-none" {...props}>
+                        {children}
+                      </summary>
+                    ),
 
-                /* ─── SECTION / DIV ─── */
-                section: ({ children, ...props }) => (
-                  <section className="my-2" {...props}>{children}</section>
-                ),
-              }}
-            >
-              {displayContent}
-            </ReactMarkdown>
+                    /* ─── SUBSCRIPT / SUPERSCRIPT ─── */
+                    sub: ({ children, ...props }) => (
+                      <sub className="text-xs text-zinc-400" {...props}>{children}</sub>
+                    ),
+                    sup: ({ children, ...props }) => (
+                      <sup className="text-xs text-emerald-400 ml-0.5" {...props}>{children}</sup>
+                    ),
+
+                    /* ─── KEYBOARD INPUT ─── */
+                    kbd: ({ children, ...props }) => (
+                      <kbd className="inline-block px-2 py-0.5 text-xs font-mono font-semibold text-zinc-300 bg-zinc-700 border border-zinc-600 rounded shadow-sm" {...props}>
+                        {children}
+                      </kbd>
+                    ),
+
+                    /* ─── MARK (highlight) ─── */
+                    mark: ({ children, ...props }) => (
+                      <mark className="bg-yellow-500/30 text-yellow-200 px-1 rounded" {...props}>{children}</mark>
+                    ),
+
+                    /* ─── ABBREVIATION ─── */
+                    abbr: ({ children, title, ...props }) => (
+                      <abbr className="underline decoration-dotted decoration-zinc-500 cursor-help text-zinc-200" title={title} {...props}>
+                        {children}
+                      </abbr>
+                    ),
+
+                    /* ─── SECTION / DIV ─── */
+                    section: ({ children, ...props }) => (
+                      <section className="my-2" {...props}>{children}</section>
+                    ),
+                  }}
+                >
+                  {seg.content}
+                </ReactMarkdown>
+              );
+            })}
           </div>
           {/* Continue button when response was cut off */}
           {!isUser && showContinue && onContinue && (
