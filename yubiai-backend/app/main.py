@@ -15,7 +15,7 @@ from app.routes.api_routes import router as api_router
 from app.routes.voice_routes import router as voice_router
 from app.routes.suggestions_routes import router as suggestions_router, init_suggestions
 
-app = FastAPI(title="YubiAI API", version="1.0.0", description="YubiAI - AI Assistant by Devopods")
+app = FastAPI(title="YubiAI API", version="1.0.0", description="YubiAI - AI Assistant by Devopod Private Limited")
 
 # CORS configuration: allow frontend origins for cross-origin API access
 app.add_middleware(

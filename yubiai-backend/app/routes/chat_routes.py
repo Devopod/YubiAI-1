@@ -47,8 +47,8 @@ VOICE_MODE_INSTRUCTION = (
 )
 
 SYSTEM_PROMPT = (
-    "You are Yubi, the AI assistant by Devopods. You are smart, helpful, and comprehensive — similar to ChatGPT or Claude. "
-    "Devopods was founded by Ayoob Mohamed Elias. The AI engineering team is led by Dewan Sakibul Islam. "
+    "You are Yubi, the AI assistant by Devopod Private Limited. You are smart, helpful, and comprehensive — similar to ChatGPT or Claude. "
+    "Devopod Private Limited was founded by Ayoob Mohamed Elias. The AI engineering team is led by Dewan Sakibul Islam. "
     "Your creators are Dewan Sakibul Islam (AI Engineer) and Ayoob Mohamed Elias (Founder).\n\n"
 
     "### Core Behavior\n"
@@ -329,9 +329,9 @@ def generate_fallback_response(messages: list) -> str:
     lower_msg = user_msg.lower().strip()
 
     if any(g in lower_msg for g in ["hello", "hello there", "hi", "hey", "good morning", "good evening"]):
-        return "Hello! I'm Yubi, the AI assistant by Devopods. How can I help you today?"
+        return "Hello! I'm Yubi, the AI assistant by Devopod Private Limited. How can I help you today?"
     elif "who are you" in lower_msg or "what are you" in lower_msg:
-        return "I'm Yubi, the AI assistant by Devopods — a tech company specializing in AI and machine learning. Founded by Ayoob Mohamed Elias, with AI engineering led by Dewan Sakibul Islam. How can I help you?"
+        return "I'm Yubi, the AI assistant by Devopod Private Limited — a tech company specializing in AI and machine learning. Founded by Ayoob Mohamed Elias, with AI engineering led by Dewan Sakibul Islam. How can I help you?"
     elif any(w in lower_msg for w in ["interview", "tv channel", "tv interview", "media", "podcast"]):
         return "Thank you for your interest! Please reach out to our communications team at requirement@devopod.co.in for interview or media engagement opportunities."
     else:

@@ -82,7 +82,7 @@ export default function DocsPage() {
               <h1 className="text-3xl font-bold">YubiAI Documentation</h1>
             </div>
             <p className="text-zinc-400 leading-relaxed mb-6">
-              Welcome to the YubiAI API documentation. YubiAI is a powerful AI assistant created by Devopods,
+              Welcome to the YubiAI API documentation. YubiAI is a powerful AI assistant created by Devopod Private Limited,
               providing intelligent conversational AI capabilities through a simple REST API.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -200,7 +200,7 @@ export default function DocsPage() {
 
               <h4 className="text-sm font-medium text-zinc-300 mt-4 mb-2">Response</h4>
               <CodeBlock language="json" code={`{
-  "response": "Hello! I'm Yubi, the AI assistant by Devopods...",
+  "response": "Hello! I'm Yubi, the AI assistant by Devopod Private Limited...",
   "model": "gpt-oss-120b",
   "usage": {
     "prompt_tokens": 25,
@@ -281,7 +281,7 @@ def chat(message):
 
 # Multi-turn conversation
 print(chat("Hello!"))
-print(chat("Tell me about Devopods"))
+print(chat("Tell me about Devopod Private Limited"))
 print(chat("What services do you offer?"))`} />
           </section>
 

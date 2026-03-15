@@ -251,7 +251,7 @@ export default function APIKeysPage() {
           <div className="rounded-xl bg-zinc-800 border border-zinc-700 overflow-hidden">
             <div className="px-4 py-2 bg-zinc-700 text-sm font-medium text-zinc-300">JSON Response</div>
             <pre className="p-4 text-xs text-zinc-300 overflow-x-auto"><code>{`{
-  "response": "Hello! I'm Yubi, the AI assistant by Devopods...",
+  "response": "Hello! I'm Yubi, the AI assistant by Devopod Private Limited...",
   "model": "gpt-oss-120b",
   "usage": {
     "prompt_tokens": 25,

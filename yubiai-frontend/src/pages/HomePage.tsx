@@ -16,7 +16,7 @@ export default function HomePage() {
                 <Bot size={20} className="text-white" />
               </div>
               <span className="text-xl font-bold">YubiAI</span>
-              <span className="text-xs text-zinc-500 ml-1">by Devopods</span>
+              <span className="text-xs text-zinc-500 ml-1">by Devopod Private Limited</span>
             </div>
             <div className="hidden md:flex items-center gap-6">
               <Link to="/docs" className="text-sm text-zinc-400 hover:text-white transition-colors">Documentation</Link>
@@ -48,7 +48,7 @@ export default function HomePage() {
             Meet <span className="text-emerald-400">YubiAI</span>
           </h1>
           <p className="text-lg sm:text-xl text-zinc-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            The next-generation AI assistant by Devopods. Built for developers, creators, and businesses.
+            The next-generation AI assistant by Devopod Private Limited. Built for developers, creators, and businesses.
             Experience intelligent conversations, code generation, and powerful API access.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -69,7 +69,7 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-center mb-4">Why Choose YubiAI?</h2>
           <p className="text-zinc-400 text-center mb-12 max-w-2xl mx-auto">
-            Built by Devopods, YubiAI combines cutting-edge AI technology with enterprise-grade reliability.
+            Built by Devopod Private Limited, YubiAI combines cutting-edge AI technology with enterprise-grade reliability.
           </p>
           <div className="grid md:grid-cols-3 gap-6">
             {[
@@ -126,12 +126,12 @@ export default function HomePage() {
       {/* About */}
       <section className="py-20 px-4 bg-zinc-800/30">
         <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl font-bold mb-6">About Devopods</h2>
+          <h2 className="text-3xl font-bold mb-6">About Devopod Private Limited</h2>
           <p className="text-zinc-400 leading-relaxed mb-8">
-            Devopods is a forward-thinking technology company specializing in artificial intelligence,
+            Devopod Private Limited is a forward-thinking technology company specializing in artificial intelligence,
             machine learning, and innovative software solutions. Founded by <strong className="text-zinc-200">Ayoob Mohamed Elias</strong>,
             with the AI engineering team led by <strong className="text-zinc-200">Dewan Sakibul Islam</strong>,
-            Devopods is committed to building cutting-edge AI products that transform how people work and create.
+            Devopod Private Limited is committed to building cutting-edge AI products that transform how people work and create.
           </p>
           <p className="text-zinc-400 leading-relaxed mb-8">
             YubiAI represents our flagship AI product - a powerful, versatile AI assistant that combines
@@ -161,9 +161,9 @@ export default function HomePage() {
           <div className="flex items-center gap-2">
             <Bot size={20} className="text-emerald-500" />
             <span className="font-semibold">YubiAI</span>
-            <span className="text-zinc-500 text-sm">by Devopods</span>
+            <span className="text-zinc-500 text-sm">by Devopod Private Limited</span>
           </div>
-          <p className="text-sm text-zinc-500">&copy; 2026 Devopods. All rights reserved.</p>
+          <p className="text-sm text-zinc-500">&copy; 2026 Devopod Private Limited. All rights reserved.</p>
         </div>
       </footer>
     </div>

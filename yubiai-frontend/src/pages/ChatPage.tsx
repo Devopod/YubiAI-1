@@ -348,7 +348,7 @@ export default function ChatPage() {
               </div>
               <h2 className="text-2xl font-semibold text-zinc-200 mb-2">How can I help you today?</h2>
               <p className="text-zinc-500 text-sm max-w-md text-center mb-8">
-                I'm Yubi, your AI assistant by Devopods. Ask me anything - coding, writing, analysis, or just chat.
+                I'm Yubi, your AI assistant by Devopod Private Limited. Ask me anything - coding, writing, analysis, or just chat.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl w-full">
                 {suggestions.map((suggestion) => (
@@ -495,7 +495,7 @@ export default function ChatPage() {
               )}
             </div>
             <p className="text-xs text-zinc-600 text-center mt-2">
-              YubiAI by Devopods. AI can make mistakes. Verify important information.
+              YubiAI by Devopod Private Limited. AI can make mistakes. Verify important information.
             </p>
           </div>
         </div>
