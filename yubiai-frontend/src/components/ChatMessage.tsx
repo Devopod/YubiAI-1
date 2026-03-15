@@ -22,10 +22,18 @@ function CodeBlock({ language, code, onCopy, isCopied }: {
   onCopy: (code: string) => void;
   isCopied: boolean;
 }) {
+  const isDirectory = language === 'directory';
   return (
     <div className="relative my-3">
       <div className="flex items-center justify-between bg-zinc-700 rounded-t-lg px-4 py-2 text-xs text-zinc-400">
-        <span>{language}</span>
+        <span className="flex items-center gap-1.5">
+          {isDirectory && (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-400">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+          )}
+          {isDirectory ? 'Directory Structure' : language}
+        </span>
         <button
           onClick={() => onCopy(code)}
           className="flex items-center gap-1 hover:text-zinc-200 transition-colors"
@@ -34,8 +42,8 @@ function CodeBlock({ language, code, onCopy, isCopied }: {
           {isCopied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="bg-[#282c34] rounded-b-lg p-4 overflow-x-auto text-sm leading-relaxed">
-        <code className={`language-${language} text-zinc-200`}>
+      <pre className={`${isDirectory ? 'bg-zinc-800/90' : 'bg-[#282c34]'} rounded-b-lg p-4 overflow-x-auto text-sm leading-relaxed`}>
+        <code className={`language-${language} ${isDirectory ? 'text-zinc-100' : 'text-zinc-200'}`} style={isDirectory ? { fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace' } : undefined}>
           {code}
         </code>
       </pre>
@@ -474,15 +482,32 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
                     /* ─── CODE (inline + block) ─── */
                     code: ({ className, children, ...props }) => {
                       const match = /language-(\w+)/.exec(className || '');
-                      const isInline = !match;
                       const codeString = String(children).replace(/\n$/, '');
-                      return isInline ? (
-                        <code className="bg-zinc-700 px-1.5 py-0.5 rounded text-sm text-emerald-300 font-mono" {...props}>
-                          {children}
-                        </code>
-                      ) : (
+                      const hasNewlines = codeString.includes('\n');
+
+                      // Detect directory tree patterns (│ ├ └ ─ or ASCII equivalents)
+                      const isDirectoryTree = /[│├└─┌┐┘┤┬┴┼]/.test(codeString) ||
+                        (/[|+\\]/.test(codeString) && /──|--/.test(codeString));
+
+                      // Block code: has a language class OR has newlines (unlabeled fenced block)
+                      const isBlock = !!match || hasNewlines;
+                      if (!isBlock) {
+                        return (
+                          <code className="bg-zinc-700 px-1.5 py-0.5 rounded text-sm text-emerald-300 font-mono" {...props}>
+                            {children}
+                          </code>
+                        );
+                      }
+
+                      // Determine display language
+                      let lang = match ? match[1] : 'text';
+                      if (isDirectoryTree && (!match || lang === 'text' || lang === 'plaintext')) {
+                        lang = 'directory';
+                      }
+
+                      return (
                         <CodeBlock
-                          language={match[1]}
+                          language={lang}
                           code={codeString}
                           onCopy={handleCodeCopy}
                           isCopied={codeCopied === codeString}
