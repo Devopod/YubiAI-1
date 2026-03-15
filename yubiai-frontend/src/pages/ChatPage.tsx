@@ -354,7 +354,7 @@ export default function ChatPage() {
                 {suggestions.map((suggestion) => (
                   <button
                     key={suggestion}
-                    onClick={() => { setInput(suggestion); }}
+                    onClick={() => handleSend(suggestion)}
                     className="p-3 rounded-xl bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-sm text-zinc-300 text-left transition-colors"
                   >
                     {suggestion}

@@ -979,7 +979,6 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
 
     if not GROQ_API_KEYS:
         yield f"data: {json.dumps({'type': 'token', 'content': generate_fallback_response(messages)})}\n\n"
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
     max_tokens = 200 if voice_mode else 4096
@@ -1038,7 +1037,6 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
                                 continue
 
                         if got_content:
-                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
                             return
             except Exception as e:
                 logger.error(f"Groq stream error with key #{key_index + 1} on {model}: {e}")
@@ -1046,7 +1044,6 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
 
     # All models/keys failed
     yield f"data: {json.dumps({'type': 'token', 'content': 'Sorry, I am experiencing high demand. Please try again shortly.'})}\n\n"
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 @router.post("/message/stream")
