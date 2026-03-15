@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, MessageSquare, Trash2, Home, Key, Book, LogOut, Menu, X, Bot, UserX } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Home, Key, Book, LogOut, Menu, X, Bot, UserX, Settings } from 'lucide-react';
 import type { Chat } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { chatAPI, authAPI } from '../services/api';
+import PersonalizationModal from './PersonalizationModal';
 
 interface SidebarProps {
   chats: Chat[];
@@ -21,6 +22,7 @@ export default function Sidebar({ chats, currentChatId, onSelectChat, onNewChat,
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [showPersonalization, setShowPersonalization] = useState(false);
 
   const handleDelete = async (e: React.MouseEvent, chatId: string) => {
     e.stopPropagation();
@@ -88,6 +90,9 @@ export default function Sidebar({ chats, currentChatId, onSelectChat, onNewChat,
         <button onClick={() => { navigate('/docs'); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
           <Book size={16} /> Documentation
         </button>
+        <button onClick={() => { setShowPersonalization(true); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
+          <Settings size={16} /> Personalization
+        </button>
       </div>
 
       {/* User */}
@@ -142,6 +147,7 @@ export default function Sidebar({ chats, currentChatId, onSelectChat, onNewChat,
 
   return (
     <>
+      <PersonalizationModal isOpen={showPersonalization} onClose={() => setShowPersonalization(false)} />
       {/* Mobile toggle */}
       <button
         onClick={() => setIsOpen(!isOpen)}

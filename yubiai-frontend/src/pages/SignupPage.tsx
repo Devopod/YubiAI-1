@@ -31,7 +31,7 @@ export default function SignupPage() {
     try {
       const res = await authAPI.signup({ name, email, password, confirm_password: confirmPassword });
       login(res.data.access_token, res.data.user);
-      navigate('/chat');
+      navigate('/onboarding');
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } };
       setError(error.response?.data?.detail || 'Signup failed. Please try again.');
@@ -46,6 +46,14 @@ export default function SignupPage() {
     try {
       const res = await authAPI.googleAuth(credentialResponse.credential);
       login(res.data.access_token, res.data.user);
+      // Check if user needs onboarding (new Google user)
+      try {
+        const profileRes = await authAPI.getProfile();
+        if (!profileRes.data.onboarding_completed) {
+          navigate('/onboarding');
+          return;
+        }
+      } catch { /* fallback to chat */ }
       navigate('/chat');
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } };

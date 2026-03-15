@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import User, Chat, Message
+from app.models import User, Chat, Message, UserProfile
 from app.schemas import ChatCreate, ChatResponse, MessageCreate, MessageResponse, ChatWithMessages
 from app.auth import get_current_user
 from app.utils.web_tools import gather_context
@@ -766,6 +766,42 @@ async def send_message(
         f"Be personalized and friendly — address them by name occasionally, but don't overuse it."
     )
 
+    # Inject personalization context from user profile
+    personalization_context = ""
+    try:
+        profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+        if profile:
+            parts = []
+            display_name = profile.nickname or user_name
+            if profile.nickname:
+                parts.append(f"The user prefers to be called **{profile.nickname}**.")
+            if profile.occupation:
+                parts.append(f"Their occupation/role: **{profile.occupation}**.")
+            if profile.about_you:
+                parts.append(f"About them: {profile.about_you}")
+            if profile.custom_instructions:
+                parts.append(f"\nCustom instructions from the user (MUST follow): {profile.custom_instructions}")
+            if profile.tone and profile.tone != "balanced":
+                tone_map = {
+                    "friendly": "Be warm, friendly, and encouraging in your responses.",
+                    "professional": "Be formal, precise, and professional in your responses.",
+                    "casual": "Be relaxed, casual, and conversational in your responses.",
+                }
+                parts.append(tone_map.get(profile.tone, ""))
+            if profile.response_style and profile.response_style != "default":
+                style_map = {
+                    "concise": "Keep responses as brief and to-the-point as possible.",
+                    "detailed": "Provide thorough, detailed explanations with examples.",
+                }
+                parts.append(style_map.get(profile.response_style, ""))
+            if parts:
+                personalization_context = (
+                    f"\n\n### Personalization\n"
+                    + " ".join(parts)
+                )
+    except Exception as e:
+        logger.error(f"Error loading user profile: {e}")
+
     # Gather cross-conversation memory (recent topics from other chats)
     cross_chat_memory = ""
     try:
@@ -802,7 +838,7 @@ async def send_message(
     except Exception as e:
         logger.error(f"Error building cross-chat memory: {e}")
 
-    system_content = SYSTEM_PROMPT + datetime_info + location_context + weather_context + user_context + cross_chat_memory
+    system_content = SYSTEM_PROMPT + datetime_info + location_context + weather_context + user_context + personalization_context + cross_chat_memory
     if data.voice_mode:
         system_content += VOICE_MODE_INSTRUCTION
 

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { TokenResponse, Chat, ChatWithMessages, Message, APIKey } from '../types';
+import type { TokenResponse, Chat, ChatWithMessages, Message, APIKey, UserProfile } from '../types';
 
 // Same-origin mode: empty string means API calls go to the same origin as the page.
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -52,6 +52,9 @@ export const authAPI = {
     api.post('/api/auth/reset-password', data),
   getMe: () => api.get<TokenResponse['user']>('/api/auth/me'),
   deleteAccount: () => api.delete('/api/auth/delete-account'),
+  getProfile: () => api.get<UserProfile>('/api/auth/profile'),
+  updateProfile: (data: Partial<UserProfile>) => api.put<UserProfile>('/api/auth/profile', data),
+  completeOnboarding: (data: Partial<UserProfile>) => api.post<UserProfile>('/api/auth/onboarding', data),
 };
 
 // Chats

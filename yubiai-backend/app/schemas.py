@@ -57,6 +57,38 @@ class ResetPasswordRequest(BaseModel):
     confirm_password: str
 
 
+# Profile schemas
+class UserProfileUpdate(BaseModel):
+    nickname: Optional[str] = None
+    occupation: Optional[str] = None
+    about_you: Optional[str] = None
+    custom_instructions: Optional[str] = None
+    tone: Optional[str] = "balanced"  # friendly, professional, casual, balanced
+    response_style: Optional[str] = "default"  # concise, detailed, default
+
+
+class UserProfileResponse(BaseModel):
+    nickname: Optional[str] = None
+    occupation: Optional[str] = None
+    about_you: Optional[str] = None
+    custom_instructions: Optional[str] = None
+    tone: str = "balanced"
+    response_style: str = "default"
+    onboarding_completed: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class OnboardingComplete(BaseModel):
+    nickname: Optional[str] = None
+    occupation: Optional[str] = None
+    about_you: Optional[str] = None
+    custom_instructions: Optional[str] = None
+    tone: Optional[str] = "balanced"
+    response_style: Optional[str] = "default"
+
+
 # Chat schemas
 class ChatCreate(BaseModel):
     title: Optional[str] = "New Chat"

@@ -31,6 +31,7 @@ class User(Base):
     chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
+    profile = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class Chat(Base):
@@ -58,6 +59,24 @@ class Message(Base):
 
     chat = relationship("Chat", back_populates="messages")
     user = relationship("User", back_populates="messages")
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id"), unique=True, nullable=False)
+    nickname = Column(String(100), nullable=True)
+    occupation = Column(String(200), nullable=True)
+    about_you = Column(Text, nullable=True)  # "More about you" freeform text
+    custom_instructions = Column(Text, nullable=True)  # How AI should respond
+    tone = Column(String(50), default="balanced")  # friendly, professional, casual, balanced
+    response_style = Column(String(50), default="default")  # concise, detailed, default
+    onboarding_completed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="profile")
 
 
 class APIKey(Base):

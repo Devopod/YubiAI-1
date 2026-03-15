@@ -37,6 +37,16 @@ export interface ChatWithMessages {
   updated_at: string;
 }
 
+export interface UserProfile {
+  nickname: string | null;
+  occupation: string | null;
+  about_you: string | null;
+  custom_instructions: string | null;
+  tone: string;
+  response_style: string;
+  onboarding_completed: boolean;
+}
+
 export interface APIKey {
   id: string;
   key: string;

@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from app.database import get_db
-from app.models import User
+from app.models import User, UserProfile
 from app.schemas import (
     UserSignup, UserLogin, GoogleAuthRequest, TokenResponse,
     UserResponse, VerifyEmailRequest, ResendVerificationRequest,
     ForgotPasswordRequest, ResetPasswordRequest,
+    UserProfileUpdate, UserProfileResponse, OnboardingComplete,
 )
 from app.auth import (
     get_password_hash, verify_password, create_access_token,
@@ -289,6 +290,62 @@ async def gmail_callback(code: str = Query(...)):
 
     # Redirect to the app home page with a success message
     return RedirectResponse(url=f"{FRONTEND_URL}/?gmail_setup=success")
+
+
+@router.get("/profile", response_model=UserProfileResponse)
+async def get_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the current user's personalization profile."""
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile:
+        # Return defaults if no profile exists yet
+        return UserProfileResponse()
+    return UserProfileResponse.model_validate(profile)
+
+
+@router.put("/profile", response_model=UserProfileResponse)
+async def update_profile(
+    data: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the current user's personalization profile."""
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = UserProfile(user_id=current_user.id)
+        db.add(profile)
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(profile, key, value)
+
+    db.commit()
+    db.refresh(profile)
+    return UserProfileResponse.model_validate(profile)
+
+
+@router.post("/onboarding", response_model=UserProfileResponse)
+async def complete_onboarding(
+    data: OnboardingComplete,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Complete onboarding and save initial profile settings."""
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = UserProfile(user_id=current_user.id)
+        db.add(profile)
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(profile, key, value)
+    profile.onboarding_completed = True
+
+    db.commit()
+    db.refresh(profile)
+    return UserProfileResponse.model_validate(profile)
 
 
 @router.delete("/delete-account")
