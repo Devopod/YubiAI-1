@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Loader2, Bot, Sparkles, Mic, Plus, X, FileText, ImageIcon } from 'lucide-react';
+import { Send, Loader2, Bot, Sparkles, Mic, Plus, X, FileText, ImageIcon, Square, Globe } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { chatAPI, suggestionsAPI } from '../services/api';
 import Sidebar from '../components/Sidebar';
@@ -14,9 +14,13 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
+  const [streamingContent, setStreamingContent] = useState('');
+  const [searchStatus, setSearchStatus] = useState<string | null>(null);
   const [loadingChats, setLoadingChats] = useState(true);
   const [voiceMode, setVoiceMode] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; content: string; is_image?: boolean }[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([
     'Write a Python function to sort a list',
     'Explain quantum computing simply',
@@ -31,7 +35,7 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(() => { scrollToBottom(); }, [messages]);
+  useEffect(() => { scrollToBottom(); }, [messages, streamingContent]);
 
   const loadChats = useCallback(async () => {
     try {
@@ -153,9 +157,16 @@ export default function ChatPage() {
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  };
+
   const handleSend = async (overrideMessage?: string) => {
     const messageToSend = overrideMessage || input.trim();
-    if ((!messageToSend && attachedFiles.length === 0) || loading) return;
+    if ((!messageToSend && attachedFiles.length === 0) || loading || streaming) return;
 
     const filesToSend = attachedFiles.length > 0 ? [...attachedFiles] : undefined;
     const displayContent = messageToSend + (filesToSend ? `\n\n📎 ${filesToSend.length} file(s) attached: ${filesToSend.map(f => f.name).join(', ')}` : '');
@@ -163,6 +174,8 @@ export default function ChatPage() {
     if (!overrideMessage) setInput('');
     setAttachedFiles([]);
     setLoading(true);
+    setStreamingContent('');
+    setSearchStatus(null);
 
     // Optimistically add user message
     const tempUserMsg: Message = {
@@ -174,36 +187,117 @@ export default function ChatPage() {
     };
     setMessages((prev) => [...prev, tempUserMsg]);
 
-    try {
-      const res = await chatAPI.sendMessage(messageToSend || 'Analyze these files', currentChatId || undefined, false, filesToSend);
-      const aiMessage = res.data;
+    // Use streaming SSE endpoint
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    let streamedContent = '';
 
-      // Update chat ID if new chat
-      if (!currentChatId) {
-        setCurrentChatId(aiMessage.chat_id);
+    try {
+      const response = await chatAPI.sendMessageStream(
+        messageToSend || 'Analyze these files',
+        currentChatId || undefined,
+        false,
+        filesToSend,
+        controller.signal,
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
 
-      setMessages((prev) => [...prev.filter(m => m.id !== tempUserMsg.id), 
-        { ...tempUserMsg, id: 'user-' + Date.now(), chat_id: aiMessage.chat_id },
-        aiMessage
-      ]);
+      setLoading(false);
+      setStreaming(true);
 
-      // Refresh chat list
-      loadChats();
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let chatId = currentChatId || '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const dataStr = line.slice(6).trim();
+          if (!dataStr) continue;
+
+          try {
+            const event = JSON.parse(dataStr);
+
+            if (event.type === 'chat_info') {
+              chatId = event.chat_id;
+              if (!currentChatId) {
+                setCurrentChatId(chatId);
+              }
+              setMessages((prev) => prev.map(m =>
+                m.id === tempUserMsg.id ? { ...m, chat_id: chatId, id: 'user-' + Date.now() } : m
+              ));
+            } else if (event.type === 'status') {
+              setSearchStatus(event.message || 'Processing...');
+            } else if (event.type === 'token') {
+              setSearchStatus(null);
+              streamedContent += event.content;
+              setStreamingContent(streamedContent);
+            } else if (event.type === 'done') {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: event.ai_message_id || 'ai-' + Date.now(),
+                  chat_id: chatId,
+                  role: 'assistant',
+                  content: streamedContent,
+                  created_at: new Date().toISOString(),
+                },
+              ]);
+              setStreamingContent('');
+              loadChats();
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
     } catch (err) {
-      console.error('Failed to send message', err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: 'error-' + Date.now(),
-          chat_id: currentChatId || '',
-          role: 'assistant',
-          content: 'Sorry, an error occurred. Please try again.',
-          created_at: new Date().toISOString(),
-        },
-      ]);
+      if ((err as Error).name === 'AbortError') {
+        // User stopped generation
+        if (streamedContent) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: 'stopped-' + Date.now(),
+              chat_id: currentChatId || '',
+              role: 'assistant',
+              content: streamedContent + '\n\n*[Generation stopped]*',
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+        setStreamingContent('');
+      } else {
+        console.error('Failed to send message', err);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: 'error-' + Date.now(),
+            chat_id: currentChatId || '',
+            role: 'assistant',
+            content: 'Sorry, an error occurred. Please try again.',
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
     }
     setLoading(false);
+    setStreaming(false);
+    setSearchStatus(null);
+    abortControllerRef.current = null;
   };
 
   const handleContinue = () => {
@@ -275,17 +369,40 @@ export default function ChatPage() {
                   key={msg.id}
                   message={msg}
                   userName={user?.name}
-                  onContinue={idx === messages.length - 1 ? handleContinue : undefined}
+                  onContinue={idx === messages.length - 1 && !streaming ? handleContinue : undefined}
                 />
               ))}
-              {loading && (
+              {/* Streaming AI response (live token-by-token) */}
+              {streaming && streamingContent && (
+                <ChatMessage
+                  message={{
+                    id: 'streaming-live',
+                    chat_id: currentChatId || '',
+                    role: 'assistant',
+                    content: streamingContent,
+                    created_at: new Date().toISOString(),
+                  }}
+                  userName={user?.name}
+                />
+              )}
+              {/* Loading / Search status indicator */}
+              {(loading || (streaming && !streamingContent)) && (
                 <div className="py-5 bg-zinc-800/30">
                   <div className="max-w-3xl mx-auto px-4 flex gap-4">
                     <div className="w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center flex-shrink-0">
                       <Bot size={16} className="text-white" />
                     </div>
                     <div className="flex items-center gap-2 text-zinc-400 text-sm">
-                      <Loader2 size={16} className="animate-spin" /> Thinking...
+                      {searchStatus ? (
+                        <>
+                          <Globe size={16} className="animate-pulse text-emerald-400" />
+                          <span className="text-emerald-400">{searchStatus}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 size={16} className="animate-spin" /> Thinking...
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -354,17 +471,28 @@ export default function ChatPage() {
               >
                 <Mic size={16} className="text-zinc-300" />
               </button>
-              <button
-                onClick={() => handleSend()}
-                disabled={(!input.trim() && attachedFiles.length === 0) || loading}
-                className="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center justify-center transition-colors flex-shrink-0"
-              >
-                {loading ? (
-                  <Loader2 size={16} className="text-white animate-spin" />
-                ) : (
-                  <Send size={16} className="text-white" />
-                )}
-              </button>
+              {/* Send or Stop button */}
+              {streaming ? (
+                <button
+                  onClick={handleStop}
+                  className="w-8 h-8 rounded-lg bg-red-600 hover:bg-red-500 flex items-center justify-center transition-colors flex-shrink-0"
+                  title="Stop generating"
+                >
+                  <Square size={14} className="text-white" fill="white" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => handleSend()}
+                  disabled={(!input.trim() && attachedFiles.length === 0) || loading}
+                  className="w-8 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:cursor-not-allowed flex items-center justify-center transition-colors flex-shrink-0"
+                >
+                  {loading ? (
+                    <Loader2 size={16} className="text-white animate-spin" />
+                  ) : (
+                    <Send size={16} className="text-white" />
+                  )}
+                </button>
+              )}
             </div>
             <p className="text-xs text-zinc-600 text-center mt-2">
               YubiAI by Devopods. AI can make mistakes. Verify important information.

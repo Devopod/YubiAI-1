@@ -5,14 +5,17 @@ import httpx
 import base64
 import io
 from datetime import datetime, timezone
+import json
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, Chat, Message, UserProfile
 from app.schemas import ChatCreate, ChatResponse, MessageCreate, MessageResponse, ChatWithMessages
 from app.auth import get_current_user
 from app.utils.web_tools import gather_context
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
 
 # OCR is handled via OCR.space free API (no system deps needed)
 
@@ -467,12 +470,44 @@ async def delete_chat(
 
 
 async def _get_location_from_ip(ip: str) -> dict:
-    """Get location details (country, city, region, lat, lon) from IP address using free geolocation API."""
+    """Get location details from IP using multiple geolocation services for accuracy.
+    
+    Uses ipinfo.io (more accurate for major cities) as primary,
+    falls back to ip-api.com if ipinfo.io fails.
+    """
     if not ip or ip in ("127.0.0.1", "::1", "localhost"):
         return {}
+
+    # Primary: ipinfo.io — generally more accurate for major cities
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            # Use extended fields for exact location: city, region (state/division), district, zip
+            resp = await client.get(f"https://ipinfo.io/{ip}/json")
+            if resp.status_code == 200:
+                data = resp.json()
+                city = data.get("city", "")
+                region = data.get("region", "")
+                country = data.get("country", "")
+                loc = data.get("loc", "")  # "lat,lon"
+                if city and loc and "," in loc:
+                    lat_str, lon_str = loc.split(",", 1)
+                    logger.info(f"ipinfo.io location for {ip}: {city}, {region}, {country}")
+                    return {
+                        "country": country,
+                        "city": city,
+                        "district": "",
+                        "region": region,
+                        "exact_location": city,
+                        "lat": float(lat_str),
+                        "lon": float(lon_str),
+                        "timezone": data.get("timezone", ""),
+                        "zip": data.get("postal", ""),
+                    }
+    except Exception as e:
+        logger.warning(f"ipinfo.io failed for {ip}: {e}")
+
+    # Fallback: ip-api.com
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
                 f"http://ip-api.com/json/{ip}",
                 params={"fields": "status,country,countryCode,regionName,city,district,zip,lat,lon,timezone,isp"}
@@ -483,8 +518,6 @@ async def _get_location_from_ip(ip: str) -> dict:
                     city = data_resp.get("city", "")
                     district = data_resp.get("district", "")
                     region = data_resp.get("regionName", "")
-                    # Build the most specific location string
-                    location_parts = [p for p in [district, city, region] if p and p != city]
                     exact_location = city
                     if district and district != city:
                         exact_location = f"{district}, {city}"
@@ -500,7 +533,7 @@ async def _get_location_from_ip(ip: str) -> dict:
                         "zip": data_resp.get("zip", ""),
                     }
     except Exception as e:
-        logger.warning(f"IP geolocation failed for {ip}: {e}")
+        logger.warning(f"ip-api.com failed for {ip}: {e}")
     return {}
 
 
@@ -895,6 +928,7 @@ async def send_message(
                 data.content,
                 conversation_history=messages_for_ai,
                 force_search=search_needed,
+                user_country=user_country,
             )
             if external_context:
                 # Inject context into the last user message
@@ -934,3 +968,353 @@ async def send_message(
     db.refresh(ai_message)
 
     return MessageResponse.model_validate(ai_message)
+
+
+async def _stream_groq_response(messages: list, voice_mode: bool = False) -> AsyncGenerator[str, None]:
+    """Stream Groq API response token by token using SSE format.
+    
+    Yields SSE-formatted strings: 'data: {"type": "token", "content": "..."}\n\n'
+    """
+    global _current_key_index
+
+    if not GROQ_API_KEYS:
+        yield f"data: {json.dumps({'type': 'token', 'content': generate_fallback_response(messages)})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
+    max_tokens = 200 if voice_mode else 4096
+    messages = _trim_messages_to_fit(messages, max_input_tokens=5500)
+    models_to_try = [GROQ_MODEL] + GROQ_FALLBACK_MODELS
+
+    for model in models_to_try:
+        is_reasoning_model = model.startswith("openai/")
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.6,
+            "top_p": 0.9,
+            "stream": True,
+        }
+        if is_reasoning_model:
+            payload["max_completion_tokens"] = max_tokens
+            payload["reasoning_effort"] = "low" if voice_mode else "medium"
+        else:
+            payload["max_tokens"] = max_tokens
+
+        num_keys = len(GROQ_API_KEYS)
+        for attempt in range(num_keys):
+            key_index = (_current_key_index + attempt) % num_keys
+            api_key = GROQ_API_KEYS[key_index]
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    async with client.stream("POST", GROQ_API_URL, json=payload, headers=headers) as response:
+                        if response.status_code == 429:
+                            logger.warning(f"Groq key #{key_index + 1} rate limited on {model}")
+                            break  # Try next key
+                        if response.status_code != 200:
+                            logger.error(f"Groq stream error {response.status_code} on {model}")
+                            break
+
+                        _current_key_index = key_index
+                        got_content = False
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            data_str = line[6:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    got_content = True
+                                    yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+                            except json.JSONDecodeError:
+                                continue
+
+                        if got_content:
+                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                            return
+            except Exception as e:
+                logger.error(f"Groq stream error with key #{key_index + 1} on {model}: {e}")
+                continue
+
+    # All models/keys failed
+    yield f"data: {json.dumps({'type': 'token', 'content': 'Sorry, I am experiencing high demand. Please try again shortly.'})}\n\n"
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+@router.post("/message/stream")
+async def send_message_stream(
+    request: Request,
+    data: MessageCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stream AI response token by token via Server-Sent Events (SSE).
+    
+    Returns an SSE stream with events:
+    - {"type": "chat_info", "chat_id": "...", "user_message_id": "..."}
+    - {"type": "status", "message": "Searching web..."}
+    - {"type": "token", "content": "partial text"}
+    - {"type": "done", "ai_message_id": "..."}
+    """
+    # Create or use existing chat
+    if data.chat_id:
+        chat = db.query(Chat).filter(Chat.id == data.chat_id, Chat.user_id == current_user.id).first()
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+    else:
+        chat = Chat(
+            title=generate_chat_title(data.content),
+            user_id=current_user.id,
+        )
+        db.add(chat)
+        db.commit()
+        db.refresh(chat)
+
+    # Save user message
+    user_message = Message(
+        chat_id=chat.id,
+        user_id=current_user.id,
+        role="user",
+        content=data.content,
+    )
+    db.add(user_message)
+    db.commit()
+    db.refresh(user_message)
+
+    # Build conversation history
+    chat_messages = (
+        db.query(Message)
+        .filter(Message.chat_id == chat.id)
+        .order_by(Message.created_at)
+        .all()
+    )
+
+    # Build system prompt (same logic as send_message)
+    now = datetime.now(timezone.utc)
+    datetime_info = (
+        f"\n\n### Current Date & Time\n"
+        f"The current date and time is: {now.strftime('%A, %B %d, %Y at %I:%M %p')} UTC. "
+        f"Always be aware of the current date and time when answering questions about recent events, "
+        f"current leaders, dates, or anything time-sensitive."
+    )
+
+    client_ip = (
+        request.headers.get("cf-connecting-ip", "").strip()
+        or request.headers.get("x-real-ip", "").strip()
+        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or request.client.host
+    )
+    user_location = await _get_location_from_ip(client_ip)
+    user_country = user_location.get("country", "")
+    user_city = user_location.get("city", "")
+    user_region = user_location.get("region", "")
+    user_exact = user_location.get("exact_location", user_city)
+    user_lat = user_location.get("lat")
+    user_lon = user_location.get("lon")
+    location_context = ""
+    if user_country:
+        full_location = ", ".join(p for p in [user_exact, user_region, user_country] if p)
+        location_context = (
+            f"\n\n### User Location\n"
+            f"The user is located in **{full_location}**. "
+            f"Their exact city is **{user_city}**, region/state: **{user_region}**, country: **{user_country}**. "
+            f"Coordinates: {user_lat}, {user_lon}. "
+            f"When they ask location-sensitive questions like 'Who is the Prime Minister?', 'Who is the President?', "
+            f"'What is the capital?', 'What is the weather?' without specifying a country, "
+            f"assume they are asking about {user_country} and answer accordingly. "
+            f"When mentioning the user's location in weather or other responses, always say the exact city name: {user_city}."
+        )
+
+    weather_context = ""
+    if _is_weather_query(data.content) and user_lat is not None and user_lon is not None:
+        weather_data = await _get_weather_data(user_lat, user_lon, user_exact or user_city or "Unknown", user_country or "Unknown")
+        if weather_data:
+            weather_context = f"\n\n{weather_data}"
+
+    user_name = current_user.name or "User"
+    user_context = (
+        f"\n\n### User Information\n"
+        f"You are currently talking to **{user_name}** (email: {current_user.email}). "
+        f"Always remember their name and use it naturally when appropriate."
+    )
+
+    personalization_context = ""
+    try:
+        profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+        if profile:
+            parts = []
+            if profile.nickname:
+                parts.append(f"The user prefers to be called **{profile.nickname}**.")
+            if profile.occupation:
+                parts.append(f"Their occupation/role: **{profile.occupation}**.")
+            if profile.about_you:
+                parts.append(f"About them: {profile.about_you}")
+            if profile.custom_instructions:
+                parts.append(f"\nCustom instructions from the user (MUST follow): {profile.custom_instructions}")
+            if profile.tone and profile.tone != "balanced":
+                tone_map = {
+                    "friendly": "Be warm, friendly, and encouraging in your responses.",
+                    "professional": "Be formal, precise, and professional in your responses.",
+                    "casual": "Be relaxed, casual, and conversational in your responses.",
+                }
+                parts.append(tone_map.get(profile.tone, ""))
+            if profile.response_style and profile.response_style != "default":
+                style_map = {
+                    "concise": "Keep responses as brief and to-the-point as possible.",
+                    "detailed": "Provide thorough, detailed explanations with examples.",
+                }
+                parts.append(style_map.get(profile.response_style, ""))
+            if parts:
+                personalization_context = "\n\n### Personalization\n" + " ".join(parts)
+    except Exception as e:
+        logger.error(f"Error loading user profile: {e}")
+
+    cross_chat_memory = ""
+    try:
+        recent_chats = (
+            db.query(Chat)
+            .filter(Chat.user_id == current_user.id, Chat.id != chat.id)
+            .order_by(Chat.updated_at.desc())
+            .limit(5)
+            .all()
+        )
+        if recent_chats:
+            memory_items = []
+            for rc in recent_chats:
+                recent_msgs = (
+                    db.query(Message)
+                    .filter(Message.chat_id == rc.id)
+                    .order_by(Message.created_at.desc())
+                    .limit(2)
+                    .all()
+                )
+                if recent_msgs:
+                    summary = recent_msgs[-1].content[:150]
+                    memory_items.append(f"- Chat '{rc.title}': {summary}")
+            if memory_items:
+                cross_chat_memory = (
+                    f"\n\n### Previous Conversation Memory\n"
+                    f"The user has had these recent conversations with you:\n"
+                    + "\n".join(memory_items[:5])
+                    + "\nUse this context naturally."
+                )
+    except Exception as e:
+        logger.error(f"Error building cross-chat memory: {e}")
+
+    system_content = SYSTEM_PROMPT + datetime_info + location_context + weather_context + user_context + personalization_context + cross_chat_memory
+    if data.voice_mode:
+        system_content += VOICE_MODE_INSTRUCTION
+
+    messages_for_ai = [{"role": "system", "content": system_content}]
+    for msg in chat_messages:
+        messages_for_ai.append({"role": msg.role, "content": msg.content})
+
+    # File contents injection
+    if data.file_contents:
+        current_context_tokens = sum(_estimate_tokens(m.get("content", "")) for m in messages_for_ai)
+        max_file_tokens = max(3000 - current_context_tokens, 1500)
+        per_file_budget = max_file_tokens // len(data.file_contents)
+        per_file_chars = per_file_budget * 4
+        file_context_parts = []
+        for fc in data.file_contents:
+            filename = fc['name']
+            if _is_image_file(filename) and fc.get('is_image'):
+                ocr_text = await _ocr_from_base64(filename, fc['content'])
+                content = f"[OCR EXTRACTED TEXT FROM IMAGE]\n{ocr_text}"
+            else:
+                content = fc['content']
+            if len(content) > per_file_chars:
+                content = content[:per_file_chars] + f"\n... [truncated]"
+            file_context_parts.append(f"\n\n[ATTACHED FILE: {filename}]\n```\n{content}\n```")
+        file_context = "".join(file_context_parts)
+        messages_for_ai[-1]["content"] = data.content + file_context
+
+    # Pre-compute: web search, external context (done BEFORE streaming starts)
+    search_needed = False
+    external_context = ""
+    is_continue = data.content.strip().lower() in ["continue", "continue.", "go on", "keep going"]
+    if not data.voice_mode and not is_continue:
+        try:
+            search_needed = await _llm_decide_search(data.content)
+            logger.info(f"Stream search decision: search_needed={search_needed}")
+            external_context = await gather_context(
+                data.content,
+                conversation_history=messages_for_ai,
+                force_search=search_needed,
+                user_country=user_country,
+            )
+            if external_context:
+                messages_for_ai[-1]["content"] = messages_for_ai[-1]["content"] + "\n\n" + external_context
+        except Exception as e:
+            logger.error(f"Error gathering context for stream: {e}")
+
+    # Capture these for the generator closure
+    chat_id = chat.id
+    user_msg_id = user_message.id
+    is_first_message = len(chat_messages) <= 1
+    msg_content_for_title = data.content
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        # Send chat info first
+        yield f"data: {json.dumps({'type': 'chat_info', 'chat_id': chat_id, 'user_message_id': user_msg_id})}\n\n"
+
+        # Send search status if web search was performed
+        if search_needed:
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Searching web...'})}\n\n"
+
+        # Stream AI response tokens
+        full_response = ""
+        async for sse_chunk in _stream_groq_response(messages_for_ai, voice_mode=bool(data.voice_mode)):
+            # Parse the SSE chunk to accumulate full response
+            if sse_chunk.startswith("data: "):
+                try:
+                    chunk_data = json.loads(sse_chunk[6:].strip())
+                    if chunk_data.get("type") == "token":
+                        full_response += chunk_data.get("content", "")
+                except json.JSONDecodeError:
+                    pass
+            yield sse_chunk
+
+        # Save AI response to database
+        try:
+            from app.database import SessionLocal
+            save_db = SessionLocal()
+            try:
+                ai_message = Message(
+                    chat_id=chat_id,
+                    user_id=current_user.id,
+                    role="assistant",
+                    content=full_response,
+                )
+                save_db.add(ai_message)
+                if is_first_message:
+                    db_chat = save_db.query(Chat).filter(Chat.id == chat_id).first()
+                    if db_chat:
+                        db_chat.title = generate_chat_title(msg_content_for_title)
+                save_db.commit()
+                save_db.refresh(ai_message)
+                # Send the final done event with message ID
+                yield f"data: {json.dumps({'type': 'done', 'ai_message_id': ai_message.id})}\n\n"
+            finally:
+                save_db.close()
+        except Exception as e:
+            logger.error(f"Error saving streamed response: {e}")
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

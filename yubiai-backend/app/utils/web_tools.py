@@ -1186,7 +1186,7 @@ def _extract_topic_from_history(conversation_history: list[dict]) -> str:
     return ""
 
 
-async def gather_context(user_message: str, conversation_history: list[dict] | None = None, force_search: bool | None = None) -> str:
+async def gather_context(user_message: str, conversation_history: list[dict] | None = None, force_search: bool | None = None, user_country: str = "") -> str:
     """Analyze user message and gather external context.
 
     Searches Wikipedia and web for messages that contain a clear topic/question.
@@ -1200,6 +1200,7 @@ async def gather_context(user_message: str, conversation_history: list[dict] | N
         force_search: If True, LLM decided search is needed — skip regex checks and search.
                       If False, LLM decided no search needed — skip web search.
                       If None, use existing regex-based logic (backward compatible).
+        user_country: User's country name for enriching political/factual queries.
     """
     urls = extract_urls(user_message)
     context_parts = []
@@ -1286,7 +1287,17 @@ async def gather_context(user_message: str, conversation_history: list[dict] | N
         # Web search IS needed (LLM said YES or regex matched) — proceed
         logger.info(f"Web search triggered for: {user_message[:50]}...")
         if len(stripped) > 5:
-            wiki_result = await search_wikipedia(stripped)
+            # Enrich political/factual queries with user's country for better Wikipedia results
+            wiki_query = stripped
+            if user_country:
+                political_pattern = re.compile(
+                    r'\b(pm|prime\s*minister|president|mp|member\s*of\s*parliament|election|government|capital|leader|minister|parliament|constituency|nirbachon|montri|prodhan\s*montri|rashtra\s*poti)\b',
+                    re.IGNORECASE,
+                )
+                if political_pattern.search(stripped):
+                    wiki_query = f"{stripped} {user_country}"
+                    logger.info(f"Enriched Wikipedia query with country: {wiki_query}")
+            wiki_result = await search_wikipedia(wiki_query)
             web_result = await search_web(stripped)
 
             if wiki_result:

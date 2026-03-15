@@ -70,6 +70,30 @@ export const chatAPI = {
       voice_mode: voiceMode || false,
       file_contents: fileContents || null,
     }),
+  sendMessageStream: (
+    content: string,
+    chatId?: string,
+    voiceMode?: boolean,
+    fileContents?: { name: string; content: string; is_image?: boolean }[],
+    signal?: AbortSignal,
+  ) => {
+    const token = localStorage.getItem('token');
+    const baseUrl = API_URL || '';
+    return fetch(`${baseUrl}/api/chats/message/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'X-Auth-Token': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        content,
+        chat_id: chatId || null,
+        voice_mode: voiceMode || false,
+        file_contents: fileContents || null,
+      }),
+      signal,
+    });
+  },
 };
 
 // Voice
