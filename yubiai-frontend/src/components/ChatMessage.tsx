@@ -130,7 +130,13 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
       return `%%CODE_BLOCK_${codeBlocks.length - 1}%%`;
     });
 
-    // Step 3: Fix LaTeX environments (\begin{...}...\end{...})
+    // Step 3: Convert \[...\] to $$...$$ and \(...\) to $...$ FIRST
+    // This must run before \begin{...} handling so environments wrapped
+    // in \[...\] are converted to $$...$$ before consolidation.
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$${inner}$$`);
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
+
+    // Step 3b: Fix LaTeX environments (\begin{...}...\end{...})
     processed = processed.replace(
       /(\$\$\s*)?\\begin\{(aligned|align|equation|gather|multline|cases|pmatrix|bmatrix|vmatrix|matrix|array|split)\}([\s\S]*?)\\end\{\2\}(\s*\$\$)?/g,
       (_m, _lead, envName, inner, _trail) => {
@@ -139,9 +145,8 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
       }
     );
 
-    // Step 3b: Convert \[...\] to $$...$$ and \(...\) to $...$
-    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$${inner}$$`);
-    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner}$`);
+    // Step 3b2: Early cleanup of $$$$ before line-by-line processing
+    processed = processed.replace(/\$\$\$\$/g, '$$');
 
     // Step 3c: Catch raw LaTeX lines (2+ commands, not already wrapped)
     // IMPORTANT: Track $$...$$ blocks so we don't wrap lines inside them
@@ -159,7 +164,10 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
       if (t.startsWith('$$') && t.endsWith('$$') && t.length > 4) return line;
       // Skip lines inside $$...$$ blocks (they're already part of display math)
       if (insideDisplayMath) return line;
-      if (!t || t.startsWith('$') || t.startsWith('%%CODE') || t.startsWith('|')) return line;
+      if (!t || t.startsWith('%%CODE') || t.startsWith('|')) return line;
+      // Skip lines that already contain inline math $...$ delimiters
+      // e.g. "where $\displaystyle \eta(\alpha)=...$ is the Dirichlet eta function."
+      if (/(?<!\$)\$(?!\$)/.test(t)) return line;
       if (/^[A-Za-z]{4,}\s/.test(t) && !latexCmdPat.test(t)) return line;
       if (latexCmdPat.test(t)) {
         const cnt = (t.match(/\\(?:frac|int|sum|sqrt|prod|lim|partial|nabla|cdot|left|right|begin|end|alpha|beta|gamma|delta|theta|phi|psi|omega|sin|cos|tan|log|ln|vec|hat|bar|infty|pm|mp|times|div)/g) || []).length;
