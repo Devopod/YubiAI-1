@@ -8,6 +8,32 @@ from app.models import User, Chat, Message, APIKey
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
+# Owner emails get unlimited Enterprise access
+ENTERPRISE_EMAILS = {"devopodinc@gmail.com", "islamdewansakibul@gmail.com"}
+
+
+def get_user_plan(email: str, total_messages: int, total_api_usage: int):
+    """Return plan info based on user email."""
+    if email.lower() in ENTERPRISE_EMAILS:
+        return {
+            "name": "Enterprise",
+            "messages_limit": -1,  # -1 means unlimited
+            "messages_used": total_messages,
+            "api_calls_limit": -1,
+            "api_calls_used": total_api_usage,
+            "storage_limit_mb": -1,
+            "storage_used_mb": 0,
+        }
+    return {
+        "name": "Free",
+        "messages_limit": 1000,
+        "messages_used": total_messages,
+        "api_calls_limit": 500,
+        "api_calls_used": total_api_usage,
+        "storage_limit_mb": 100,
+        "storage_used_mb": 0,
+    }
+
 
 @router.get("/stats")
 async def get_dashboard_stats(
@@ -115,13 +141,5 @@ async def get_dashboard_stats(
             "created_at": account_created.isoformat() if account_created else None,
             "days_active": days_since_creation,
         },
-        "plan": {
-            "name": "Free",
-            "messages_limit": 1000,
-            "messages_used": total_messages,
-            "api_calls_limit": 500,
-            "api_calls_used": total_api_usage,
-            "storage_limit_mb": 100,
-            "storage_used_mb": 0,
-        },
+        "plan": get_user_plan(current_user.email, total_messages, total_api_usage),
     }

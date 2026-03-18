@@ -29,7 +29,7 @@ interface BillingStats {
   };
 }
 
-const PLANS = [
+const ALL_PLANS = [
   {
     name: 'Free',
     price: '$0',
@@ -43,9 +43,9 @@ const PLANS = [
       'Email support',
       'Basic analytics',
     ],
-    current: true,
     color: 'zinc',
-    cta: 'Current Plan',
+    defaultCta: 'Current Plan',
+    otherCta: 'Downgrade',
   },
   {
     name: 'Pro',
@@ -62,9 +62,9 @@ const PLANS = [
       'Custom system prompts',
       'Webhook integrations',
     ],
-    current: false,
     color: 'emerald',
-    cta: 'Coming Soon',
+    defaultCta: 'Coming Soon',
+    otherCta: 'Coming Soon',
   },
   {
     name: 'Enterprise',
@@ -81,9 +81,9 @@ const PLANS = [
       'SSO & team management',
       'On-premise deployment',
     ],
-    current: false,
     color: 'violet',
-    cta: 'Contact Sales',
+    defaultCta: 'Contact Sales',
+    otherCta: 'Contact Sales',
   },
 ];
 
@@ -99,6 +99,8 @@ export default function BillingPage() {
       .catch((err) => console.error('Failed to load billing stats', err))
       .finally(() => setLoading(false));
   }, [user]);
+
+  const currentPlanName = stats?.plan.name || 'Free';
 
   return (
     <div className="min-h-screen bg-zinc-900 text-white">
@@ -172,8 +174,9 @@ export default function BillingPage() {
               <p className="text-zinc-400 text-sm mb-6">Choose the plan that fits your needs. Payment gateway coming soon.</p>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
-                {PLANS.map((plan) => {
-                  const borderColor = plan.current
+                {ALL_PLANS.map((plan) => {
+                  const isCurrent = plan.name === currentPlanName;
+                  const borderColor = isCurrent
                     ? 'border-emerald-500/50'
                     : plan.color === 'emerald'
                     ? 'border-emerald-500/30 hover:border-emerald-500/50'
@@ -186,7 +189,7 @@ export default function BillingPage() {
                       key={plan.name}
                       className={`relative p-5 sm:p-6 rounded-xl bg-zinc-800 border-2 ${borderColor} transition-colors`}
                     >
-                      {plan.current && (
+                      {isCurrent && (
                         <div className="absolute -top-3 left-4 px-3 py-0.5 bg-emerald-600 rounded-full text-xs font-bold">
                           Current
                         </div>
@@ -208,9 +211,9 @@ export default function BillingPage() {
                         ))}
                       </ul>
                       <button
-                        disabled={plan.current}
+                        disabled={isCurrent}
                         className={`w-full py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                          plan.current
+                          isCurrent
                             ? 'bg-zinc-700 text-zinc-400 cursor-default'
                             : plan.color === 'emerald'
                             ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
@@ -219,7 +222,7 @@ export default function BillingPage() {
                             : 'bg-zinc-700 hover:bg-zinc-600 text-zinc-200'
                         }`}
                       >
-                        {plan.cta}
+                        {isCurrent ? 'Current Plan' : plan.otherCta}
                       </button>
                     </div>
                   );
@@ -243,7 +246,7 @@ export default function BillingPage() {
                 </div>
                 <div>
                   <p className="text-xs text-zinc-500 mb-1">Current Plan</p>
-                  <p className="text-sm text-zinc-200">Free</p>
+                  <p className="text-sm text-zinc-200">{currentPlanName}</p>
                 </div>
                 <div>
                   <p className="text-xs text-zinc-500 mb-1">Member Since</p>
@@ -287,8 +290,9 @@ function UsageCard({ icon: Icon, label, used, limit, color, unit }: {
   color: string;
   unit?: string;
 }) {
-  const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0;
-  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : color === 'emerald' ? 'bg-emerald-500' : color === 'blue' ? 'bg-blue-500' : 'bg-violet-500';
+  const isUnlimited = limit === -1;
+  const pct = isUnlimited ? 0 : limit > 0 ? Math.min((used / limit) * 100, 100) : 0;
+  const barColor = isUnlimited ? (color === 'emerald' ? 'bg-emerald-500' : color === 'blue' ? 'bg-blue-500' : 'bg-violet-500') : pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : color === 'emerald' ? 'bg-emerald-500' : color === 'blue' ? 'bg-blue-500' : 'bg-violet-500';
 
   return (
     <div className="p-4 sm:p-5 rounded-xl bg-zinc-800 border border-zinc-700">
@@ -298,12 +302,22 @@ function UsageCard({ icon: Icon, label, used, limit, color, unit }: {
       </div>
       <div className="flex items-baseline gap-1 mb-2">
         <span className="text-xl sm:text-2xl font-bold">{used.toLocaleString()}</span>
-        <span className="text-sm text-zinc-500">/ {limit.toLocaleString()} {unit || ''}</span>
+        {isUnlimited ? (
+          <span className="text-sm text-emerald-400 font-medium">/ Unlimited</span>
+        ) : (
+          <span className="text-sm text-zinc-500">/ {limit.toLocaleString()} {unit || ''}</span>
+        )}
       </div>
-      <div className="w-full h-2 bg-zinc-700 rounded-full overflow-hidden">
-        <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
-      </div>
-      <p className="text-xs text-zinc-500 mt-1.5">{pct.toFixed(0)}% used</p>
+      {isUnlimited ? (
+        <div className="w-full h-2 bg-zinc-700 rounded-full overflow-hidden">
+          <div className={`h-full ${barColor} rounded-full`} style={{ width: '100%' }} />
+        </div>
+      ) : (
+        <div className="w-full h-2 bg-zinc-700 rounded-full overflow-hidden">
+          <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+      <p className="text-xs text-zinc-500 mt-1.5">{isUnlimited ? 'Unlimited usage' : `${pct.toFixed(0)}% used`}</p>
     </div>
   );
 }
