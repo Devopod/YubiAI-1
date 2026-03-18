@@ -14,6 +14,7 @@ from app.routes.apikey_routes import router as apikey_router
 from app.routes.api_routes import router as api_router
 from app.routes.voice_routes import router as voice_router
 from app.routes.suggestions_routes import router as suggestions_router, init_suggestions
+from app.routes.dashboard_routes import router as dashboard_router
 
 app = FastAPI(title="YubiAI API", version="1.0.0", description="YubiAI - AI Assistant by Devopod Private Limited")
 
@@ -38,6 +39,7 @@ app.include_router(apikey_router)
 app.include_router(api_router)
 app.include_router(voice_router)
 app.include_router(suggestions_router)
+app.include_router(dashboard_router)
 
 
 @app.on_event("startup")

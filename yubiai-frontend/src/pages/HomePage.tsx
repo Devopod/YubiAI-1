@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, Zap, Shield, Code, Globe, Brain, Rocket, ArrowRight, MessageSquare, Key, Book } from 'lucide-react';
+import { Bot, Zap, Shield, Code, Globe, Brain, Rocket, ArrowRight, MessageSquare, Key, Book, Menu, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function HomePage() {
   const { user } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-zinc-900 text-white">
@@ -34,7 +36,24 @@ export default function HomePage() {
                 </div>
               )}
             </div>
+            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden text-zinc-400 hover:text-white">
+              {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
           </div>
+          {mobileMenuOpen && (
+            <div className="md:hidden border-t border-zinc-800 py-3 flex flex-col gap-2">
+              <Link to="/docs" onClick={() => setMobileMenuOpen(false)} className="px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg">Documentation</Link>
+              <Link to="/api-keys" onClick={() => setMobileMenuOpen(false)} className="px-3 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg">API</Link>
+              {user ? (
+                <Link to="/chat" onClick={() => setMobileMenuOpen(false)} className="px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium text-center">Open Chat</Link>
+              ) : (
+                <>
+                  <Link to="/login" onClick={() => setMobileMenuOpen(false)} className="px-3 py-2 text-sm text-zinc-300 hover:text-white hover:bg-zinc-800 rounded-lg">Log in</Link>
+                  <Link to="/signup" onClick={() => setMobileMenuOpen(false)} className="px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium text-center">Sign up</Link>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </nav>
 
@@ -138,7 +157,7 @@ export default function HomePage() {
             natural language understanding, code generation, and knowledge synthesis into a single,
             seamless experience. Our mission is to make advanced AI accessible to everyone.
           </p>
-          <div className="grid grid-cols-3 gap-6 mt-12">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-12">
             <div className="p-4">
               <p className="text-3xl font-bold text-emerald-400">AI-First</p>
               <p className="text-sm text-zinc-500 mt-1">Technology Company</p>

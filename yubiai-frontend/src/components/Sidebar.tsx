@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, MessageSquare, Trash2, Home, Key, Book, LogOut, Menu, X, Bot, UserX, Settings } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Home, Key, Book, LogOut, Menu, X, Bot, UserX, Settings, LayoutDashboard, CreditCard } from 'lucide-react';
 import type { Chat } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { chatAPI, authAPI } from '../services/api';
@@ -81,11 +81,17 @@ export default function Sidebar({ chats, currentChatId, onSelectChat, onNewChat,
         <button onClick={() => { navigate('/'); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
           <Home size={16} /> Home
         </button>
+        <button onClick={() => { navigate('/dashboard'); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
+          <LayoutDashboard size={16} /> Dashboard
+        </button>
         <button onClick={() => { navigate('/chat'); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
           <Bot size={16} /> YubiAI Chat
         </button>
         <button onClick={() => { navigate('/api-keys'); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
           <Key size={16} /> API Keys
+        </button>
+        <button onClick={() => { navigate('/billing'); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
+          <CreditCard size={16} /> Billing
         </button>
         <button onClick={() => { navigate('/docs'); setIsOpen(false); }} className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-800 transition-colors">
           <Book size={16} /> Documentation

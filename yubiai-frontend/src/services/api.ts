@@ -116,4 +116,9 @@ export const apiKeyAPI = {
   toggle: (keyId: string) => api.put(`/api/keys/${keyId}/toggle`),
 };
 
+// Dashboard
+export const dashboardAPI = {
+  getStats: () => api.get('/api/dashboard/stats'),
+};
+
 export default api;
