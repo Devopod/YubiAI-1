@@ -224,6 +224,9 @@ async def _single_ai_call(messages: list, max_tokens: int, voice_mode: bool = Fa
             payload["reasoning_effort"] = "low" if voice_mode else "medium"
         else:
             payload["max_tokens"] = max_tokens
+            # Add penalties to prevent repetition loops
+            payload["frequency_penalty"] = 0.3
+            payload["presence_penalty"] = 0.3
 
         num_keys = len(GROQ_API_KEYS)
         all_keys_failed = True
@@ -970,6 +973,34 @@ async def send_message(
     return MessageResponse.model_validate(ai_message)
 
 
+def _detect_repetition(recent_tokens: list, threshold: int = 8) -> bool:
+    """Detect if the AI is stuck in a repetition loop.
+    
+    Checks if the same word/phrase appears consecutively too many times.
+    Returns True if repetition is detected.
+    """
+    if len(recent_tokens) < threshold:
+        return False
+    # Check last N tokens — if more than threshold are identical, it's a loop
+    last_tokens = recent_tokens[-threshold:]
+    if len(set(last_tokens)) == 1:
+        return True
+    # Check for repeating 2-3 word patterns
+    text = "".join(recent_tokens[-60:])
+    words = text.split()
+    if len(words) >= 12:
+        for pattern_len in [1, 2, 3]:
+            if len(words) >= pattern_len * 5:
+                pattern = " ".join(words[-pattern_len:])
+                count = 0
+                for i in range(len(words) - pattern_len + 1):
+                    if " ".join(words[i:i + pattern_len]) == pattern:
+                        count += 1
+                if count >= 5:
+                    return True
+    return False
+
+
 async def _stream_groq_response(messages: list, voice_mode: bool = False) -> AsyncGenerator[str, None]:
     """Stream Groq API response token by token using SSE format.
     
@@ -999,6 +1030,9 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
             payload["reasoning_effort"] = "low" if voice_mode else "medium"
         else:
             payload["max_tokens"] = max_tokens
+            # Add penalties to prevent repetition loops
+            payload["frequency_penalty"] = 0.3
+            payload["presence_penalty"] = 0.3
 
         num_keys = len(GROQ_API_KEYS)
         for attempt in range(num_keys):
@@ -1013,13 +1047,15 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
                     async with client.stream("POST", GROQ_API_URL, json=payload, headers=headers) as response:
                         if response.status_code == 429:
                             logger.warning(f"Groq key #{key_index + 1} rate limited on {model}")
-                            break  # Try next key
+                            await asyncio.sleep(2)  # Brief pause before trying next key
+                            break
                         if response.status_code != 200:
                             logger.error(f"Groq stream error {response.status_code} on {model}")
                             break
 
                         _current_key_index = key_index
                         got_content = False
+                        recent_tokens = []  # Track tokens for repetition detection
                         async for line in response.aiter_lines():
                             if not line.startswith("data: "):
                                 continue
@@ -1032,6 +1068,11 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
                                 content = delta.get("content", "")
                                 if content:
                                     got_content = True
+                                    recent_tokens.append(content)
+                                    # Detect repetition loop and stop early
+                                    if len(recent_tokens) > 20 and _detect_repetition(recent_tokens):
+                                        logger.warning(f"Repetition loop detected on {model}, stopping stream")
+                                        return
                                     yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
                             except json.JSONDecodeError:
                                 continue
@@ -1042,8 +1083,17 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
                 logger.error(f"Groq stream error with key #{key_index + 1} on {model}: {e}")
                 continue
 
-    # All models/keys failed
-    yield f"data: {json.dumps({'type': 'token', 'content': 'Sorry, I am experiencing high demand. Please try again shortly.'})}\n\n"
+    # All models/keys failed — try non-streaming fallback instead of showing error
+    logger.warning("All streaming attempts failed, trying non-streaming fallback")
+    try:
+        fallback_text, _ = await _single_ai_call(messages, max_tokens=512, voice_mode=voice_mode)
+        if fallback_text:
+            yield f"data: {json.dumps({'type': 'token', 'content': fallback_text})}\n\n"
+            return
+    except Exception as e:
+        logger.error(f"Non-streaming fallback also failed: {e}")
+    # Last resort — use local fallback response
+    yield f"data: {json.dumps({'type': 'token', 'content': generate_fallback_response(messages)})}\n\n"
 
 
 @router.post("/message/stream")
