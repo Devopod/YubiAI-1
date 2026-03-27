@@ -1021,7 +1021,7 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
         yield f"data: {json.dumps({'type': 'token', 'content': generate_fallback_response(messages)})}\n\n"
         return
 
-    max_tokens = 200 if voice_mode else 4096
+    max_tokens = 200 if voice_mode else 16384
     messages = _trim_messages_to_fit(messages, max_input_tokens=5500)
     models_to_try = [GROQ_MODEL] + GROQ_FALLBACK_MODELS
 
@@ -1095,7 +1095,7 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
     # All models/keys failed — try non-streaming fallback instead of showing error
     logger.warning("All streaming attempts failed, trying non-streaming fallback")
     try:
-        fallback_text, _ = await _single_ai_call(messages, max_tokens=512, voice_mode=voice_mode)
+        fallback_text, _ = await _single_ai_call(messages, max_tokens=4096, voice_mode=voice_mode)
         if fallback_text:
             yield f"data: {json.dumps({'type': 'token', 'content': fallback_text})}\n\n"
             return
