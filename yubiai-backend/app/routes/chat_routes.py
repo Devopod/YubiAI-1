@@ -982,30 +982,50 @@ async def send_message(
     return MessageResponse.model_validate(ai_message)
 
 
-def _detect_repetition(recent_tokens: list, threshold: int = 8) -> bool:
+def _detect_repetition(recent_tokens: list, threshold: int = 10) -> bool:
     """Detect if the AI is stuck in a repetition loop.
     
     Checks if the same word/phrase appears consecutively too many times.
     Returns True if repetition is detected.
+    Ignores common structural characters (|, -, #, *, etc.) that repeat
+    naturally in markdown tables, lists, and headings.
     """
     if len(recent_tokens) < threshold:
         return False
-    # Check last N tokens — if more than threshold are identical, it's a loop
+    
+    # Check last N tokens — if more than threshold are identical AND not structural
     last_tokens = recent_tokens[-threshold:]
     if len(set(last_tokens)) == 1:
-        return True
-    # Check for repeating 2-3 word patterns
-    text = "".join(recent_tokens[-60:])
+        token = last_tokens[0].strip()
+        # Ignore structural markdown characters that repeat naturally
+        structural_chars = {'|', '-', '---', '#', '##', '###', '*', '**', '```', '\n', '', ' '}
+        if token not in structural_chars and len(token) > 1:
+            return True
+    
+    # Check for repeating word patterns (but filter out markdown structural words)
+    text = "".join(recent_tokens[-80:])
+    # Skip detection if text looks like it contains a table (many | characters)
+    if text.count('|') > 5:
+        return False
+    # Skip if text contains code blocks
+    if '```' in text:
+        return False
+    
     words = text.split()
-    if len(words) >= 12:
+    # Filter out structural/common markdown words
+    content_words = [w for w in words if w not in {'|', '-', '---', '#', '##', '###', '*', '**', '```', '|---', '---|'}]
+    if len(content_words) >= 15:
         for pattern_len in [1, 2, 3]:
-            if len(words) >= pattern_len * 5:
-                pattern = " ".join(words[-pattern_len:])
+            if len(content_words) >= pattern_len * 6:
+                pattern = " ".join(content_words[-pattern_len:])
+                # Only flag actual content words repeating, not short tokens
+                if len(pattern.strip()) < 2:
+                    continue
                 count = 0
-                for i in range(len(words) - pattern_len + 1):
-                    if " ".join(words[i:i + pattern_len]) == pattern:
+                for i in range(len(content_words) - pattern_len + 1):
+                    if " ".join(content_words[i:i + pattern_len]) == pattern:
                         count += 1
-                if count >= 5:
+                if count >= 6:
                     return True
     return False
 
