@@ -182,7 +182,15 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
     processed = processed.replace(
       /(\$\$\s*)?\\begin\{(aligned|align|equation|gather|multline|cases|pmatrix|bmatrix|vmatrix|matrix|array|split)\}([\s\S]*?)\\end\{\2\}(\s*\$\$)?/g,
       (_m, _lead, envName, inner, _trail) => {
-        const cleaned = inner.replace(/\$\$/g, '');
+        let cleaned = inner.replace(/\$\$/g, '');
+        // Fix common AI output issues in aligned environments:
+        // 1. &; → & (HTML entity artifact)
+        cleaned = cleaned.replace(/&;/g, '&');
+        // 2. Single backslash at end of line → double backslash for LaTeX line break
+        // Match a single \ followed by whitespace/newline but NOT already \\
+        cleaned = cleaned.replace(/(?<!\\)\\(?=\s*\n)/g, '\\\\');
+        // 3. Fix &\; pattern (semicolons after alignment)
+        cleaned = cleaned.replace(/&\\;/g, '& ');
         return `$$\n\\begin{${envName}}${cleaned}\\end{${envName}}\n$$`;
       }
     );
