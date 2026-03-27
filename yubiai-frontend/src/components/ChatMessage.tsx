@@ -121,7 +121,49 @@ function ChatMessageInner({ message, userName, onContinue }: ChatMessageProps) {
       }
     }
 
-    let processed = tableResult.join('\n');
+    // Auto-insert missing separator row for markdown tables
+    // If we see a header row (| ... |) followed by a data row (| ... |) without a separator (| --- | --- |)
+    const fixedTable: string[] = [];
+    for (let i = 0; i < tableResult.length; i++) {
+      fixedTable.push(tableResult[i]);
+      const curr = tableResult[i]?.trim() || '';
+      // If current is a table row and next is also a table row but NOT a separator, insert separator
+      if (isTableRow(tableResult[i]) && !isSeparator(tableResult[i]) &&
+          i + 1 < tableResult.length && isTableRow(tableResult[i + 1]) && !isSeparator(tableResult[i + 1])) {
+        // Check if there's already a separator between them
+        const colCount = curr.split('|').length - 2; // subtract 2 for leading/trailing empty
+        if (colCount > 0 && i === fixedTable.length - 1 || !isSeparator(curr)) {
+          // Only insert if this looks like the first table row (header)
+          // Check if the row before is NOT a table row (meaning this is the header)
+          const prev = i > 0 ? tableResult[i - 1]?.trim() || '' : '';
+          if (!isTableRow(tableResult[i - 1]) || i === 0 || prev === '') {
+            const sep = '| ' + Array(colCount).fill('---').join(' | ') + ' |';
+            fixedTable.push(sep);
+          }
+        }
+      }
+    }
+
+    let processed = fixedTable.join('\n');
+
+    // Convert tab-separated table-like content with ** header ** to proper markdown tables
+    // Pattern: **Col1\tCol2\tCol3** followed by lines with tab separators
+    processed = processed.replace(
+      /\*\*([^\n*]+)\*\*\n((?:[^\n]+\t[^\n]+\n?)+)/g,
+      (_m, header: string, body: string) => {
+        const headerCols = header.split('\t').map((c: string) => c.trim());
+        if (headerCols.length < 2) return _m;
+        const headerRow = '| ' + headerCols.join(' | ') + ' |';
+        const sepRow = '| ' + headerCols.map(() => '---').join(' | ') + ' |';
+        const bodyRows = body.trim().split('\n').map((line: string) => {
+          const cols = line.split('\t').map((c: string) => c.trim());
+          // Pad or truncate to match header column count
+          while (cols.length < headerCols.length) cols.push('');
+          return '| ' + cols.slice(0, headerCols.length).join(' | ') + ' |';
+        }).join('\n');
+        return headerRow + '\n' + sepRow + '\n' + bodyRows + '\n';
+      }
+    );
 
     // Step 2: Extract code blocks first to protect them
     const codeBlocks: string[] = [];
