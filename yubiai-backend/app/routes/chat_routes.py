@@ -242,8 +242,9 @@ async def _single_ai_call(messages: list, max_tokens: int, voice_mode: bool = Fa
 
         num_keys = len(GROQ_API_KEYS)
         all_keys_failed = True
+        backoff_delay = 2
 
-        for attempt in range(num_keys):
+        for attempt in range(num_keys * 2):  # Try each key up to 2 times
             key_index = (_current_key_index + attempt) % num_keys
             api_key = GROQ_API_KEYS[key_index]
 
@@ -253,11 +254,18 @@ async def _single_ai_call(messages: list, max_tokens: int, voice_mode: bool = Fa
             }
 
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=180.0) as client:
                     response = await client.post(GROQ_API_URL, json=payload, headers=headers)
 
                     if response.status_code == 429:
-                        logger.warning(f"Groq key #{key_index + 1} rate limited on {model}, trying next...")
+                        logger.warning(f"Groq key #{key_index + 1} rate limited on {model}, backoff {backoff_delay}s")
+                        await asyncio.sleep(backoff_delay)
+                        backoff_delay = min(backoff_delay * 2, 16)
+                        continue
+
+                    if response.status_code in (502, 503):
+                        logger.warning(f"Groq server error {response.status_code} on {model}, retrying...")
+                        await asyncio.sleep(3)
                         continue
 
                     if response.status_code != 200:
@@ -278,6 +286,11 @@ async def _single_ai_call(messages: list, max_tokens: int, voice_mode: bool = Fa
                                 logger.info(f"Used fallback model: {model}")
                             return generated, finished
 
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError) as e:
+                logger.warning(f"Transient network error with key #{key_index + 1} on {model}: {e}, retrying...")
+                await asyncio.sleep(backoff_delay)
+                backoff_delay = min(backoff_delay * 2, 16)
+                continue
             except Exception as e:
                 logger.error(f"Groq API error with key #{key_index + 1} on {model}: {e}")
                 continue
@@ -1037,6 +1050,14 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
     """Stream Groq API response token by token using SSE format.
     
     Yields SSE-formatted strings: 'data: {"type": "token", "content": "..."}\n\n'
+    
+    Resilience features:
+    - Rotates through multiple API keys on rate-limit (429)
+    - Falls back through multiple models if primary fails
+    - Exponential backoff on rate limits (2s, 4s, 8s)
+    - Retries on transient network errors (timeout, connection reset)
+    - Non-streaming fallback if all streaming attempts fail
+    - Local fallback response as last resort
     """
     global _current_key_index
 
@@ -1067,7 +1088,8 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
             payload["presence_penalty"] = 0.3
 
         num_keys = len(GROQ_API_KEYS)
-        for attempt in range(num_keys):
+        backoff_delay = 2  # Start with 2s backoff
+        for attempt in range(num_keys * 2):  # Try each key up to 2 times
             key_index = (_current_key_index + attempt) % num_keys
             api_key = GROQ_API_KEYS[key_index]
             headers = {
@@ -1075,12 +1097,17 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
                 "Authorization": f"Bearer {api_key}",
             }
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=180.0) as client:
                     async with client.stream("POST", GROQ_API_URL, json=payload, headers=headers) as response:
                         if response.status_code == 429:
-                            logger.warning(f"Groq key #{key_index + 1} rate limited on {model}")
-                            await asyncio.sleep(2)  # Brief pause before trying next key
-                            break
+                            logger.warning(f"Groq key #{key_index + 1} rate limited on {model}, backoff {backoff_delay}s")
+                            await asyncio.sleep(backoff_delay)
+                            backoff_delay = min(backoff_delay * 2, 16)  # Exponential backoff, max 16s
+                            continue
+                        if response.status_code == 503 or response.status_code == 502:
+                            logger.warning(f"Groq server error {response.status_code} on {model}, retrying...")
+                            await asyncio.sleep(3)
+                            continue
                         if response.status_code != 200:
                             logger.error(f"Groq stream error {response.status_code} on {model}")
                             break
@@ -1111,6 +1138,11 @@ async def _stream_groq_response(messages: list, voice_mode: bool = False) -> Asy
 
                         if got_content:
                             return
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError) as e:
+                logger.warning(f"Transient network error with key #{key_index + 1} on {model}: {e}, retrying...")
+                await asyncio.sleep(backoff_delay)
+                backoff_delay = min(backoff_delay * 2, 16)
+                continue
             except Exception as e:
                 logger.error(f"Groq stream error with key #{key_index + 1} on {model}: {e}")
                 continue
